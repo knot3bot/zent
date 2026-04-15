@@ -171,7 +171,7 @@ pub fn main() !void {
 
     // QUERY Cars by owner (O2M edge traversal)
     std.debug.print("\n-- QUERY Cars (edge traversal) --\n", .{});
-    var cars = try Client.queryTargets(infos, "User", "cars", &.{alice.id}, allocator, drv.asDriver());
+    var cars = try client.user.QueryEdge("cars", &.{alice.id});
     defer cars.deinit();
     std.debug.print("Cars owned by Alice: {d}\n", .{cars.items.len});
     for (cars.items) |c| {
@@ -180,7 +180,7 @@ pub fn main() !void {
 
     // QUERY Groups by user (M2M edge traversal)
     std.debug.print("\n-- QUERY Groups (M2M edge traversal) --\n", .{});
-    var groups = try Client.queryTargets(infos, "User", "groups", &.{alice.id}, allocator, drv.asDriver());
+    var groups = try client.user.QueryEdge("groups", &.{alice.id});
     defer groups.deinit();
     std.debug.print("Groups Alice belongs to: {d}\n", .{groups.items.len});
     for (groups.items) |g| {

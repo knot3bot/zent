@@ -14,8 +14,19 @@ const DeleteGen = @import("update_delete.zig").DeleteBuilder;
 const PredGen = @import("predicate.zig").makePredicates;
 const MetaGen = @import("meta.zig").Meta;
 
+fn capitalize(comptime s: []const u8) []const u8 {
+    comptime {
+        var result: [s.len]u8 = undefined;
+        result[0] = std.ascii.toUpper(s[0]);
+        for (s[1..], 1..) |c, i| {
+            result[i] = c;
+        }
+        return &result;
+    }
+}
+
 /// Client for a single entity type.
-pub fn EntityClient(comptime info: TypeInfo) type {
+pub fn EntityClient(comptime infos: []const TypeInfo, comptime info: TypeInfo) type {
     const Entity = EntityGen(info);
     const CreateBuilder = CreateGen(info, Entity);
     const QueryBuilder = QueryGen(info, Entity);
@@ -53,6 +64,12 @@ pub fn EntityClient(comptime info: TypeInfo) type {
 
         pub fn Delete(self: Self) DeleteBuilder {
             return DeleteBuilder.init(self.allocator, self.driver);
+        }
+
+        /// Query target entities via an edge.
+        /// Example: user_client.QueryEdge("cars", &.{alice.id}) returns Car entities.
+        pub fn QueryEdge(self: Self, comptime edge_name: []const u8, parent_ids: []const i64) !QueryTargetsResult(infos, info.name, edge_name) {
+            return queryTargets(infos, info.name, edge_name, parent_ids, self.allocator, self.driver);
         }
 
         pub const EntityType = Entity;
@@ -98,7 +115,7 @@ pub fn Client(comptime infos: []const TypeInfo) type {
 
         // Entity sub-clients (user, car, group, ...)
         for (infos) |info| {
-            const ClientType = EntityClient(info);
+            const ClientType = EntityClient(infos, info);
 
             fields = fields ++ &[_]std.builtin.Type.StructField{.{
                 .name = structFieldName(info.name),
@@ -124,7 +141,7 @@ pub fn Client(comptime infos: []const TypeInfo) type {
 pub fn makeClient(comptime infos: []const TypeInfo, allocator: std.mem.Allocator, driver: sql_driver.Driver) Client(infos) {
     var result: Client(infos) = undefined;
     inline for (infos) |info| {
-        const ClientType = EntityClient(info);
+        const ClientType = EntityClient(infos, info);
         const field_name = comptime toSnakeCase(info.name);
         @field(result, field_name) = ClientType.init(allocator, driver);
     }
@@ -243,19 +260,33 @@ pub fn queryTargets(
         }
         return result;
     } else {
-        // O2M / O2O: FK is in target table (for To edge) or source table (for From edge)
+        // O2M / O2O
         const target_table = target_info.table_name;
         const fk_col = comptime getEdgeFKColumn(edge, source_info, target_info);
 
         var buf: [512]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
         const writer = fbs.writer();
-        try writer.print("SELECT * FROM \"{s}\" WHERE \"{s}\" IN (", .{ target_table, fk_col });
+
+        if (edge.kind == .to) {
+            // To edge: FK is in target table
+            try writer.print("SELECT * FROM \"{s}\" WHERE \"{s}\" IN (", .{ target_table, fk_col });
+        } else {
+            // From edge: FK is in source table; use subquery
+            const source_table = source_info.table_name;
+            try writer.print("SELECT * FROM \"{s}\" WHERE \"id\" IN (SELECT \"{s}\" FROM \"{s}\" WHERE \"id\" IN (", .{
+                target_table, fk_col, source_table,
+            });
+        }
         for (parent_ids, 0..) |_, i| {
             if (i > 0) try writer.writeAll(", ");
             try writer.writeAll("?");
         }
-        try writer.writeAll(")");
+        if (edge.kind == .from) {
+            try writer.writeAll("))");
+        } else {
+            try writer.writeAll(")");
+        }
         const sql_text = fbs.getWritten();
 
         var args = try allocator.alloc(sql.Value, parent_ids.len);
@@ -292,7 +323,8 @@ test "EntityClient" {
     });
 
     const info = comptime fromSchema(User);
-    const ClientType = EntityClient(info);
+    const infos = &[_]TypeInfo{info};
+    const ClientType = EntityClient(infos, info);
 
     const client = ClientType.init(std.testing.allocator, undefined);
     var builder = client.Create();
