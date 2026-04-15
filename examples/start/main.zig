@@ -169,16 +169,22 @@ pub fn main() !void {
     const only_alice = try q2.Only();
     std.debug.print("Only Alice: id={d}, name={s}\n", .{ only_alice.id, only_alice.name });
 
-    // QUERY Cars by owner
+    // QUERY Cars by owner (O2M edge traversal)
     std.debug.print("\n-- QUERY Cars (edge traversal) --\n", .{});
-    var car_query = client.car.Query();
-    defer car_query.deinit();
-    _ = car_query.Where(.{sql.EQ("owner_id", .{ .int = alice.id })});
-    var cars = try car_query.All();
+    var cars = try Client.queryTargets(infos, "User", "cars", &.{alice.id}, allocator, drv.asDriver());
     defer cars.deinit();
     std.debug.print("Cars owned by Alice: {d}\n", .{cars.items.len});
     for (cars.items) |c| {
         std.debug.print("  id={d}, model={s}\n", .{ c.id, c.model });
+    }
+
+    // QUERY Groups by user (M2M edge traversal)
+    std.debug.print("\n-- QUERY Groups (M2M edge traversal) --\n", .{});
+    var groups = try Client.queryTargets(infos, "User", "groups", &.{alice.id}, allocator, drv.asDriver());
+    defer groups.deinit();
+    std.debug.print("Groups Alice belongs to: {d}\n", .{groups.items.len});
+    for (groups.items) |g| {
+        std.debug.print("  id={d}, name={s}\n", .{ g.id, g.name });
     }
 
     // COUNT

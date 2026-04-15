@@ -125,36 +125,45 @@ pub fn tableFromTypeInfo(comptime info: TypeInfo) TableDef {
 }
 
 /// Generate a junction table definition for M2M edges.
+/// Columns and table name are deterministically ordered alphabetically
+/// so that whichever edge triggers creation first produces the same schema.
 pub fn junctionTableForEdge(comptime edge: EdgeInfo, comptime source_info: TypeInfo) TableDef {
     comptime {
         const source_table = source_info.table_name;
         const target_table = toSnakeCase(edge.target_name);
 
+        const a_first = std.mem.lessThan(u8, source_table, target_table);
+
         // Junction table name: alphabetically sorted
-        const table_name = if (std.mem.lessThan(u8, source_table, target_table))
+        const table_name = if (a_first)
             source_table ++ "_" ++ target_table
         else
             target_table ++ "_" ++ source_table;
 
-        const source_col = source_table ++ "_id";
-        const target_col = target_table ++ "_id";
+        // Columns are also ordered alphabetically by their referenced table
+        const col_a = source_table ++ "_id";
+        const col_b = target_table ++ "_id";
+        const col1 = if (a_first) col_a else col_b;
+        const col2 = if (a_first) col_b else col_a;
+        const ref1 = if (a_first) source_table else target_table;
+        const ref2 = if (a_first) target_table else source_table;
 
         return TableDef{
             .name = table_name,
             .columns = &.{
-                ColumnDef{ .name = source_col, .sql_type = "INTEGER", .not_null = true },
-                ColumnDef{ .name = target_col, .sql_type = "INTEGER", .not_null = true },
+                ColumnDef{ .name = col1, .sql_type = "INTEGER", .not_null = true },
+                ColumnDef{ .name = col2, .sql_type = "INTEGER", .not_null = true },
             },
-            .primary_keys = &.{ source_col, target_col },
+            .primary_keys = &.{ col1, col2 },
             .foreign_keys = &.{
                 ForeignKeyDef{
-                    .columns = &[_][]const u8{source_col},
-                    .ref_table = source_table,
+                    .columns = &[_][]const u8{col1},
+                    .ref_table = ref1,
                     .ref_columns = &[_][]const u8{"id"},
                 },
                 ForeignKeyDef{
-                    .columns = &[_][]const u8{target_col},
-                    .ref_table = target_table,
+                    .columns = &[_][]const u8{col2},
+                    .ref_table = ref2,
                     .ref_columns = &[_][]const u8{"id"},
                 },
             },

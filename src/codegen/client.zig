@@ -3,6 +3,7 @@ const TypeInfo = @import("graph.zig").TypeInfo;
 const EdgeInfo = @import("graph.zig").EdgeInfo;
 const sql_driver = @import("../sql/driver.zig");
 const sql = @import("../sql/builder.zig");
+const sql_scan = @import("../sql/scan.zig");
 const migrate = @import("../sql/schema/migrate.zig");
 
 const EntityGen = @import("entity.zig").Entity;
@@ -136,8 +137,52 @@ pub fn createAllTables(comptime infos: []const TypeInfo, driver: sql_driver.Driv
     return migrate.createAllTables(driver, infos);
 }
 
+fn findTypeInfo(comptime infos: []const TypeInfo, comptime name: []const u8) TypeInfo {
+    for (infos) |info| {
+        if (std.mem.eql(u8, info.name, name)) return info;
+    }
+    @compileError("TypeInfo not found: " ++ name);
+}
+
+fn findEdgeInfo(comptime info: TypeInfo, comptime name: []const u8) EdgeInfo {
+    for (info.edges) |e| {
+        if (std.mem.eql(u8, e.name, name)) return e;
+    }
+    @compileError("Edge not found: " ++ name ++ " on " ++ info.name);
+}
+
+fn getEdgeFKColumn(comptime edge: EdgeInfo, comptime source_info: TypeInfo, comptime target_info: TypeInfo) []const u8 {
+    if (edge.kind == .to) {
+        // Target table holds the FK. Look for inverse From edge.
+        for (target_info.edges) |target_edge| {
+            if (target_edge.kind == .from) {
+                if (target_edge.ref) |ref| {
+                    if (std.mem.eql(u8, ref, edge.name)) {
+                        return target_edge.name ++ "_id";
+                    }
+                }
+            }
+        }
+        return toSnakeCase(source_info.name) ++ "_id";
+    } else {
+        // From edge: this entity holds the FK
+        return edge.name ++ "_id";
+    }
+}
+
+fn QueryTargetsResult(
+    comptime infos: []const TypeInfo,
+    comptime source_name: []const u8,
+    comptime edge_name: []const u8,
+) type {
+    const source_info = findTypeInfo(infos, source_name);
+    const edge = findEdgeInfo(source_info, edge_name);
+    const target_info = findTypeInfo(infos, edge.target_name);
+    return std.array_list.Managed(EntityGen(target_info));
+}
+
 /// Query target entities via an O2M/M2M edge.
-/// For example: queryTargets(infos, "cars", &[1], allocator, driver) returns Car entities for user 1.
+/// For example: queryTargets(infos, "User", "cars", &[1], allocator, driver) returns Car entities for user 1.
 pub fn queryTargets(
     comptime infos: []const TypeInfo,
     comptime source_name: []const u8,
@@ -145,14 +190,92 @@ pub fn queryTargets(
     parent_ids: []const i64,
     allocator: std.mem.Allocator,
     driver: sql_driver.Driver,
-) !std.array_list.Managed(anyopaque) {
-    _ = infos;
-    _ = source_name;
-    _ = edge_name;
-    _ = parent_ids;
-    _ = allocator;
-    _ = driver;
-    return error.NotImplemented;
+) !QueryTargetsResult(infos, source_name, edge_name) {
+    const source_info = comptime findTypeInfo(infos, source_name);
+    const edge = comptime findEdgeInfo(source_info, edge_name);
+    const target_info = comptime findTypeInfo(infos, edge.target_name);
+    const TargetEntity = comptime EntityGen(target_info);
+
+    if (parent_ids.len == 0) {
+        return std.array_list.Managed(TargetEntity).init(allocator);
+    }
+
+    if (edge.relation == .m2m) {
+        // M2M: query via junction table
+        const source_table = source_info.table_name;
+        const target_table = target_info.table_name;
+        const junction_table = if (std.mem.lessThan(u8, source_table, target_table))
+            source_table ++ "_" ++ target_table
+        else
+            target_table ++ "_" ++ source_table;
+        const source_col = source_table ++ "_id";
+        const target_col = target_table ++ "_id";
+
+        // Build SQL with placeholders
+        var buf: [512]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        const writer = fbs.writer();
+        try writer.print("SELECT * FROM \"{s}\" WHERE \"id\" IN (SELECT \"{s}\" FROM \"{s}\" WHERE \"{s}\" IN (", .{
+            target_table, target_col, junction_table, source_col,
+        });
+        for (parent_ids, 0..) |_, i| {
+            if (i > 0) try writer.writeAll(", ");
+            try writer.writeAll("?");
+        }
+        try writer.writeAll("))");
+        const sql_text = fbs.getWritten();
+
+        var args = try allocator.alloc(sql.Value, parent_ids.len);
+        defer allocator.free(args);
+        for (parent_ids, 0..) |id, i| {
+            args[i] = .{ .int = id };
+        }
+
+        var rows = try driver.query(sql_text, args);
+        defer rows.deinit();
+
+        var result = std.array_list.Managed(TargetEntity).init(allocator);
+        errdefer result.deinit();
+
+        while (rows.next()) |row| {
+            const entity = try sql_scan.scanRow(TargetEntity, allocator, row);
+            result.append(entity) catch unreachable;
+        }
+        return result;
+    } else {
+        // O2M / O2O: FK is in target table (for To edge) or source table (for From edge)
+        const target_table = target_info.table_name;
+        const fk_col = comptime getEdgeFKColumn(edge, source_info, target_info);
+
+        var buf: [512]u8 = undefined;
+        var fbs = std.io.fixedBufferStream(&buf);
+        const writer = fbs.writer();
+        try writer.print("SELECT * FROM \"{s}\" WHERE \"{s}\" IN (", .{ target_table, fk_col });
+        for (parent_ids, 0..) |_, i| {
+            if (i > 0) try writer.writeAll(", ");
+            try writer.writeAll("?");
+        }
+        try writer.writeAll(")");
+        const sql_text = fbs.getWritten();
+
+        var args = try allocator.alloc(sql.Value, parent_ids.len);
+        defer allocator.free(args);
+        for (parent_ids, 0..) |id, i| {
+            args[i] = .{ .int = id };
+        }
+
+        var rows = try driver.query(sql_text, args);
+        defer rows.deinit();
+
+        var result = std.array_list.Managed(TargetEntity).init(allocator);
+        errdefer result.deinit();
+
+        while (rows.next()) |row| {
+            const entity = try sql_scan.scanRow(TargetEntity, allocator, row);
+            result.append(entity) catch unreachable;
+        }
+        return result;
+    }
 }
 
 // ------------------------------------------------------------------
