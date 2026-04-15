@@ -19,6 +19,7 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
         order_terms: std.array_list.Managed(sql.Order),
         limit_val: ?usize,
         offset_val: ?usize,
+        with_trashed: bool,
 
         pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver) Self {
             return .{
@@ -28,6 +29,7 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
                 .order_terms = std.array_list.Managed(sql.Order).init(allocator),
                 .limit_val = null,
                 .offset_val = null,
+                .with_trashed = false,
             };
         }
 
@@ -71,6 +73,11 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
 
         pub fn Offset(self: *Self, n: usize) *Self {
             self.offset_val = n;
+            return self;
+        }
+
+        pub fn WithTrashed(self: *Self) *Self {
+            self.with_trashed = true;
             return self;
         }
 
@@ -215,6 +222,9 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
                     _ = selector.where(pred);
                 }
             }
+            if (info.soft_delete and !self.with_trashed) {
+                _ = selector.where(sql.IsNull("deleted_at"));
+            }
             if (self.order_terms.items.len > 0) {
                 for (self.order_terms.items) |term| {
                     _ = selector.orderBy(term);
@@ -240,6 +250,9 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
                     _ = selector.where(pred);
                 }
             }
+            if (info.soft_delete and !self.with_trashed) {
+                _ = selector.where(sql.IsNull("deleted_at"));
+            }
             return try selector.query();
         }
 
@@ -252,6 +265,9 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
                 for (self.predicates.items) |pred| {
                     _ = selector.where(pred);
                 }
+            }
+            if (info.soft_delete and !self.with_trashed) {
+                _ = selector.where(sql.IsNull("deleted_at"));
             }
             if (self.limit_val) |n| {
                 _ = selector.limit(n);

@@ -7,3 +7,10 @@ pub const TimeMixin = struct {
         field.Time("updated_at").Optional(),
     };
 };
+
+/// A mixin that adds a deleted_at timestamp field for soft-delete support.
+pub const SoftDeleteMixin = struct {
+    pub const fields = &[_]field.Field{
+        field.Time("deleted_at").Optional(),
+    };
+};

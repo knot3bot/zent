@@ -317,5 +317,45 @@ pub fn main() !void {
     const count_after = try q4.Count();
     std.debug.print("Users after delete attempt: {d}\n", .{count_after});
 
+    // SOFT DELETE demo (on Group which has soft_delete mixin)
+    std.debug.print("\n-- SOFT DELETE (Group) --\n", .{});
+    var gq1 = client.group.Query();
+    defer gq1.deinit();
+    var groups_before = try gq1.All();
+    defer groups_before.deinit();
+    std.debug.print("Groups before soft delete: {d}\n", .{groups_before.items.len});
+
+    var gdel = client.group.Delete();
+    defer gdel.deinit();
+    _ = gdel.Where(.{client.group.predicates.nameEQ(.{ .string = "TX Group" })});
+    const soft_deleted = try gdel.Exec();
+    std.debug.print("Soft deleted {d} group(s)\n", .{soft_deleted});
+
+    var gq2 = client.group.Query();
+    defer gq2.deinit();
+    var groups_after = try gq2.All();
+    defer groups_after.deinit();
+    std.debug.print("Groups after soft delete: {d}\n", .{groups_after.items.len});
+
+    var gq3 = client.group.Query();
+    defer gq3.deinit();
+    _ = gq3.WithTrashed();
+    var groups_trashed = try gq3.All();
+    defer groups_trashed.deinit();
+    std.debug.print("Groups with trashed: {d}\n", .{groups_trashed.items.len});
+
+    var gdel_force = client.group.Delete();
+    defer gdel_force.deinit();
+    _ = gdel_force.Where(.{client.group.predicates.nameEQ(.{ .string = "TX Group" })});
+    const force_deleted = try gdel_force.ForceExec();
+    std.debug.print("Force deleted {d} group(s)\n", .{force_deleted});
+
+    var gq4 = client.group.Query();
+    defer gq4.deinit();
+    _ = gq4.WithTrashed();
+    var groups_final = try gq4.All();
+    defer groups_final.deinit();
+    std.debug.print("Groups after force delete (with trashed): {d}\n", .{groups_final.items.len});
+
     std.debug.print("\nAll phases (0-4) completed successfully.\n", .{});
 }

@@ -259,7 +259,53 @@ pub fn DeleteBuilder(comptime info: TypeInfo) type {
         }
 
         /// Execute the DELETE and return rows affected.
+        /// If the entity has soft_delete enabled, this updates deleted_at instead.
         pub fn Exec(self: *Self) !usize {
+            if (info.soft_delete) {
+                return self.execSoftDelete();
+            }
+            return self.execHardDelete();
+        }
+
+        /// Force a hard DELETE even if soft_delete is enabled.
+        pub fn ForceExec(self: *Self) !usize {
+            return self.execHardDelete();
+        }
+
+        fn execSoftDelete(self: *Self) !usize {
+            if (info.policy) |p| {
+                if (p.evalMutation(.delete, info.table_name) == .deny) {
+                    return error.PrivacyDenied;
+                }
+            }
+            for (self.hooks) |h| {
+                if (h.op == .delete) {
+                    if (h.before) |f| f(.delete, info.table_name);
+                }
+            }
+            defer {
+                for (self.hooks) |h| {
+                    if (h.op == .delete) {
+                        if (h.after) |f| f(.delete, info.table_name);
+                    }
+                }
+            }
+
+            const now = std.time.timestamp();
+            var builder = sql.Update(self.allocator, self.driver.dialect(), info.table_name);
+            defer builder.deinit();
+            _ = builder.set("deleted_at", .{ .int = now });
+
+            for (self.predicates.items) |pred| {
+                _ = builder.where(pred);
+            }
+
+            const q = try builder.query();
+            const res = try self.driver.exec(q.sql, q.args);
+            return res.rows_affected;
+        }
+
+        fn execHardDelete(self: *Self) !usize {
             if (info.policy) |p| {
                 if (p.evalMutation(.delete, info.table_name) == .deny) {
                     return error.PrivacyDenied;

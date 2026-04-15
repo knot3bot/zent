@@ -51,6 +51,7 @@ pub const TypeInfo = struct {
     policy: ?Policy = null,
     is_view: bool = false,
     view_sql: ?[]const u8 = null,
+    soft_delete: bool = false,
 };
 
 /// Build a TypeInfo from a schema type at comptime.
@@ -62,6 +63,7 @@ pub fn fromSchema(comptime S: type) TypeInfo {
         const schema_policy = if (@hasDecl(S, "policy")) S.policy else null;
         const schema_is_view = if (@hasDecl(S, "is_view")) S.is_view else false;
         const schema_view_sql = if (@hasDecl(S, "view_sql")) S.view_sql else null;
+        const schema_soft_delete = if (@hasDecl(S, "soft_delete")) S.soft_delete else false;
         const name = S.schema_name;
 
         // Auto-inject ID if not present.
@@ -96,6 +98,7 @@ pub fn fromSchema(comptime S: type) TypeInfo {
             .policy = schema_policy,
             .is_view = schema_is_view,
             .view_sql = schema_view_sql,
+            .soft_delete = schema_soft_delete,
         };
     }
 }
@@ -305,6 +308,7 @@ pub fn resolveGraphEdges(comptime infos: []const TypeInfo) []const TypeInfo {
                 .policy = info.policy,
                 .is_view = info.is_view,
                 .view_sql = info.view_sql,
+                .soft_delete = info.soft_delete,
             }};
         }
         return result;
@@ -397,6 +401,7 @@ fn addEdgeFields(comptime info: TypeInfo, comptime all_infos: []const TypeInfo) 
             .policy = info.policy,
             .is_view = info.is_view,
             .view_sql = info.view_sql,
+            .soft_delete = info.soft_delete,
         };
     }
 }

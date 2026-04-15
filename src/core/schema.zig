@@ -61,6 +61,7 @@ pub fn Schema(comptime name: []const u8, comptime config: struct {
     policy: ?@import("../privacy/policy.zig").Policy = null,
     view: bool = false,
     view_sql: ?[]const u8 = null,
+    soft_delete: bool = false,
 }) type {
     const all_fields = mergeMixinFields(config.fields, config.mixins);
     const all_edges = mergeMixinEdges(config.edges, config.mixins);
@@ -75,6 +76,7 @@ pub fn Schema(comptime name: []const u8, comptime config: struct {
         pub const policy = all_policy;
         pub const is_view = config.view;
         pub const view_sql = config.view_sql;
+        pub const soft_delete = config.soft_delete;
     };
 }
 

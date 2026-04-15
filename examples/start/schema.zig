@@ -20,6 +20,9 @@ fn withEdges(comptime Base: type, comptime es: []const edge.Edge) type {
         pub const edges = es;
         pub const indexes = Base.indexes;
         pub const policy = if (@hasDecl(Base, "policy")) Base.policy else null;
+        pub const is_view = if (@hasDecl(Base, "is_view")) Base.is_view else false;
+        pub const view_sql = if (@hasDecl(Base, "view_sql")) Base.view_sql else null;
+        pub const soft_delete = if (@hasDecl(Base, "soft_delete")) Base.soft_delete else false;
     };
 }
 
@@ -34,6 +37,8 @@ const GroupBase = Schema("Group", .{
     .fields = &.{
         field.String("name"),
     },
+    .soft_delete = true,
+    .mixins = &.{zent.core.mixin.SoftDeleteMixin},
 });
 
 const UserBase = Schema("User", .{
