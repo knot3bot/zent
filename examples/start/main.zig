@@ -236,6 +236,15 @@ pub fn main() !void {
         std.debug.print("  id={d}, name={s}, age={d}, status={s}, theme={s}\n", .{ u.id, u.name, u.age, u.status, u.settings.theme });
     }
 
+    // RAW PREDICATE demo
+    std.debug.print("\n-- RAW PREDICATE --\n", .{});
+    var qraw = client.user.Query();
+    defer qraw.deinit();
+    _ = qraw.Where(&[_]sql.Predicate{sql.Raw("age > 20")});
+    var raw_users = try qraw.All();
+    defer raw_users.deinit();
+    std.debug.print("Users with raw predicate (age > 20): {d}\n", .{raw_users.items.len});
+
     // FIRST / ONLY
     var q2 = client.user.Query();
     defer q2.deinit();

@@ -149,6 +149,7 @@ pub const Predicate = union(enum) {
     in: InOp,
     is_null: []const u8,
     is_not_null: []const u8,
+    raw: []const u8,
     and_: struct { left: *const Predicate, right: *const Predicate },
     or_: struct { left: *const Predicate, right: *const Predicate },
     not_: *const Predicate,
@@ -210,6 +211,9 @@ pub const Predicate = union(enum) {
             .is_not_null => |col| {
                 try b.ident(col);
                 try b.writeString(" IS NOT NULL");
+            },
+            .raw => |sql_text| {
+                try b.writeString(sql_text);
             },
             .and_ => |p| {
                 try b.writeByte('(');
@@ -283,6 +287,10 @@ pub fn Or(left: *const Predicate, right: *const Predicate) Predicate {
 
 pub fn Not(pred: *const Predicate) Predicate {
     return .{ .not_ = pred };
+}
+
+pub fn Raw(sql_text: []const u8) Predicate {
+    return .{ .raw = sql_text };
 }
 
 // ------------------------------------------------------------------
@@ -754,4 +762,14 @@ test "MySQL identifiers" {
     _ = s.from(Table("users"));
     const q = try s.query();
     try std.testing.expectEqualStrings("SELECT `id` FROM `users`", q.sql);
+}
+
+test "Raw predicate" {
+    const allocator = std.testing.allocator;
+    var s = Select(allocator, Dialect.sqlite, &.{Table("users").c("id")});
+    defer s.deinit();
+    _ = s.from(Table("users")).where(Raw("age > 20"));
+    const q = try s.query();
+    try std.testing.expectEqualStrings("SELECT \"id\" FROM \"users\" WHERE age > 20", q.sql);
+    try std.testing.expectEqual(@as(usize, 0), q.args.len);
 }
