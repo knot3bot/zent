@@ -161,9 +161,38 @@ pub fn main() !void {
 
     std.debug.print("Added users to groups via AddEdge.\n", .{});
 
+    const user_preds = client.user.predicates;
+
+    // TRANSACTION demo
+    std.debug.print("\n-- TRANSACTION --\n", .{});
+    var tx = try zent.codegen.client.beginTx(infos, client);
+    var tx_group_builder = tx.client.group.Create();
+    defer tx_group_builder.deinit();
+    _ = tx_group_builder.setFieldValue("name", "TX Group");
+    const tx_group = try tx_group_builder.Save();
+    std.debug.print("Created group in tx: id={d}, name={s}\n", .{ tx_group.id, tx_group.name });
+
+    var tx_user_builder = tx.client.user.Create();
+    defer tx_user_builder.deinit();
+    _ = tx_user_builder.setFieldValue("name", "TX User");
+    _ = tx_user_builder.setFieldValue("age", 99);
+    _ = tx_user_builder.setFieldValue("status", "active");
+    _ = tx_user_builder.setFieldValue("settings", UserSettings{ .theme = "tx", .notifications = false });
+    const tx_user = try tx_user_builder.Save();
+    std.debug.print("Created user in tx: id={d}, name={s}\n", .{ tx_user.id, tx_user.name });
+
+    try tx.commit();
+    std.debug.print("Transaction committed.\n", .{});
+
+    // Verify tx data is visible outside tx
+    var qtx = client.user.Query();
+    defer qtx.deinit();
+    _ = qtx.Where(.{user_preds.nameEQ(.{ .string = "TX User" })});
+    const tx_user_outside = try qtx.Only();
+    std.debug.print("Verified tx user outside tx: id={d}, name={s}\n", .{ tx_user_outside.id, tx_user_outside.name });
+
     // QUERY with predicates
     std.debug.print("\n-- QUERY Users --\n", .{});
-    const user_preds = client.user.predicates;
 
     var qbuilder = client.user.Query();
     defer qbuilder.deinit();

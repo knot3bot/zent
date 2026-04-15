@@ -116,11 +116,43 @@ fn structFieldName(comptime name: []const u8) [:0]const u8 {
     }
 }
 
+/// Transactional client wrapper.
+pub fn TxClient(comptime infos: []const TypeInfo) type {
+    return struct {
+        client: Client(infos),
+        tx: sql_driver.Tx,
+
+        pub fn commit(self: *@This()) !void {
+            return self.tx.commit();
+        }
+
+        pub fn rollback(self: *@This()) !void {
+            return self.tx.rollback();
+        }
+    };
+}
+
 /// Generate a root Client type from multiple TypeInfos.
 /// The Client holds entity sub-clients and per-edge query helpers.
 pub fn Client(comptime infos: []const TypeInfo) type {
     comptime {
         var fields: []const std.builtin.Type.StructField = &.{};
+
+        // Root fields
+        fields = fields ++ &[_]std.builtin.Type.StructField{.{
+            .name = "allocator",
+            .type = std.mem.Allocator,
+            .default_value_ptr = null,
+            .is_comptime = false,
+            .alignment = @alignOf(std.mem.Allocator),
+        }};
+        fields = fields ++ &[_]std.builtin.Type.StructField{.{
+            .name = "driver",
+            .type = sql_driver.Driver,
+            .default_value_ptr = null,
+            .is_comptime = false,
+            .alignment = @alignOf(sql_driver.Driver),
+        }};
 
         // Entity sub-clients (user, car, group, ...)
         for (infos) |info| {
@@ -135,7 +167,7 @@ pub fn Client(comptime infos: []const TypeInfo) type {
             }};
         }
 
-        return @Type(.{
+        const ClientType = @Type(.{
             .@"struct" = .{
                 .layout = .auto,
                 .fields = fields,
@@ -143,18 +175,31 @@ pub fn Client(comptime infos: []const TypeInfo) type {
                 .is_tuple = false,
             },
         });
+
+        return ClientType;
     }
 }
 
 /// Instantiate a Client.
 pub fn makeClient(comptime infos: []const TypeInfo, allocator: std.mem.Allocator, driver: sql_driver.Driver) Client(infos) {
     var result: Client(infos) = undefined;
+    result.allocator = allocator;
+    result.driver = driver;
     inline for (infos) |info| {
         const ClientType = EntityClient(infos, info);
         const field_name = comptime toSnakeCase(info.name);
         @field(result, field_name) = ClientType.init(allocator, driver);
     }
     return result;
+}
+
+/// Begin a transaction and return a TxClient backed by the transaction.
+pub fn beginTx(comptime infos: []const TypeInfo, self: Client(infos)) !TxClient(infos) {
+    const tx = try self.driver.beginTx();
+    return TxClient(infos){
+        .client = makeClient(infos, self.allocator, tx.inner),
+        .tx = tx,
+    };
 }
 
 /// Create all database tables (create-only migration).
