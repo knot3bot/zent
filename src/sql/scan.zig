@@ -46,6 +46,8 @@ pub fn scanRow(comptime T: type, allocator: std.mem.Allocator, row: Row) !T {
                 } else {
                     if (@typeInfo(field.type) == .optional) {
                         @field(value, field.name) = null;
+                    } else if (comptime std.mem.eql(u8, field.name, "edges")) {
+                        @field(value, field.name) = @as(@TypeOf(@field(value, field.name)), .{});
                     } else {
                         return error.MissingColumn;
                     }
@@ -57,7 +59,7 @@ pub fn scanRow(comptime T: type, allocator: std.mem.Allocator, row: Row) !T {
     }
 }
 
-fn findColumnIndex(row: Row, name: []const u8) ?usize {
+pub fn findColumnIndex(row: Row, name: []const u8) ?usize {
     const n = row.columnCount();
     for (0..n) |i| {
         if (std.mem.eql(u8, row.columnName(i), name)) {

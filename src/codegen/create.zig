@@ -319,8 +319,8 @@ test "Create builder basic" {
     });
 
     const info = comptime fromSchema(User);
-    const UserEntity = comptime EntityGen(info);
     const infos = &[_]TypeInfo{info};
+    const UserEntity = comptime EntityGen(infos, info);
     const Builder = CreateBuilder(infos, info, UserEntity);
 
     var b = Builder.init(std.testing.allocator, undefined);

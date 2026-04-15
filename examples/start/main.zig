@@ -260,6 +260,33 @@ pub fn main() !void {
         std.debug.print("  id={d}, name={s}\n", .{ g.id, g.name });
     }
 
+    // EAGER LOADING demo
+    std.debug.print("\n-- EAGER LOADING --\n", .{});
+    var qeager = client.user.Query();
+    defer qeager.deinit();
+    _ = qeager.WithEdge("cars").WithEdge("groups");
+    var eager_users = try qeager.All();
+    defer {
+        qeager.deinitEdges(eager_users.items);
+        eager_users.deinit();
+    }
+    std.debug.print("Eager loaded users: {d}\n", .{eager_users.items.len});
+    for (eager_users.items) |u| {
+        std.debug.print("User: {s}\n", .{u.name});
+        if (u.edges.cars) |uc| {
+            std.debug.print("  Cars: {d}\n", .{uc.len});
+            for (uc) |c| {
+                std.debug.print("    id={d}, model={s}\n", .{ c.id, c.model });
+            }
+        }
+        if (u.edges.groups) |user_groups| {
+            std.debug.print("  Groups: {d}\n", .{user_groups.len});
+            for (user_groups) |g| {
+                std.debug.print("    id={d}, name={s}\n", .{ g.id, g.name });
+            }
+        }
+    }
+
     // COUNT
     var q3 = client.user.Query();
     defer q3.deinit();

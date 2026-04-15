@@ -28,9 +28,9 @@ fn capitalize(comptime s: []const u8) []const u8 {
 
 /// Client for a single entity type.
 pub fn EntityClient(comptime infos: []const TypeInfo, comptime info: TypeInfo) type {
-    const Entity = EntityGen(info);
+    const Entity = EntityGen(infos, info);
     const CreateBuilder = CreateGen(infos, info, Entity);
-    const QueryBuilder = QueryGen(info, Entity);
+    const QueryBuilder = QueryGen(infos, info, Entity);
     const UpdateBuilder = UpdateGen(info);
     const DeleteBuilder = DeleteGen(info);
     const Predicates = comptime PredGen(info);
@@ -253,7 +253,7 @@ fn QueryTargetsResult(
     const source_info = findTypeInfo(infos, source_name);
     const edge = findEdgeInfo(source_info, edge_name);
     const target_info = findTypeInfo(infos, edge.target_name);
-    return std.array_list.Managed(EntityGen(target_info));
+    return std.array_list.Managed(EntityGen(infos, target_info));
 }
 
 /// Query target entities via an O2M/M2M edge.
@@ -269,7 +269,7 @@ pub fn queryTargets(
     const source_info = comptime findTypeInfo(infos, source_name);
     const edge = comptime findEdgeInfo(source_info, edge_name);
     const target_info = comptime findTypeInfo(infos, edge.target_name);
-    const TargetEntity = comptime EntityGen(target_info);
+    const TargetEntity = comptime EntityGen(infos, target_info);
 
     if (parent_ids.len == 0) {
         return std.array_list.Managed(TargetEntity).init(allocator);
