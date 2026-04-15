@@ -88,6 +88,21 @@ pub fn main() !void {
     std.debug.print("\n=== Phase 2: Generated CRUD ===\n", .{});
     var client = Client.makeClient(infos, allocator, drv.asDriver());
 
+    // Attach a simple hook to the user client for demonstration
+    const user_hooks = &[_]zent.runtime.hook.Hook{
+        .{ .op = .create, .before = struct {
+            fn f(op: zent.runtime.hook.Op, table: []const u8) void {
+                std.debug.print("[HOOK] Before {s} on {s}\n", .{ @tagName(op), table });
+            }
+        }.f },
+        .{ .op = .create, .after = struct {
+            fn f(op: zent.runtime.hook.Op, table: []const u8) void {
+                std.debug.print("[HOOK] After {s} on {s}\n", .{ @tagName(op), table });
+            }
+        }.f },
+    };
+    client.user = client.user.withHooks(user_hooks);
+
     // CREATE Group
     std.debug.print("-- CREATE Group --\n", .{});
     var group1_builder = client.group.Create();

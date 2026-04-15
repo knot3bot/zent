@@ -5,6 +5,7 @@ const sql_driver = @import("../sql/driver.zig");
 const sql = @import("../sql/builder.zig");
 const sql_scan = @import("../sql/scan.zig");
 const migrate = @import("../sql/schema/migrate.zig");
+const Hook = @import("../runtime/hook.zig").Hook;
 
 const EntityGen = @import("entity.zig").Entity;
 const CreateGen = @import("create.zig").CreateBuilder;
@@ -41,17 +42,25 @@ pub fn EntityClient(comptime infos: []const TypeInfo, comptime info: TypeInfo) t
         allocator: std.mem.Allocator,
         driver: sql_driver.Driver,
         predicates: @TypeOf(Predicates),
+        hooks: []const Hook,
 
         pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver) Self {
             return .{
                 .allocator = allocator,
                 .driver = driver,
                 .predicates = Predicates,
+                .hooks = &.{},
             };
         }
 
+        pub fn withHooks(self: Self, hooks: []const Hook) Self {
+            var copy = self;
+            copy.hooks = hooks;
+            return copy;
+        }
+
         pub fn Create(self: Self) CreateBuilder {
-            return CreateBuilder.init(self.allocator, self.driver);
+            return CreateBuilder.init(self.allocator, self.driver, self.hooks);
         }
 
         pub fn Query(self: Self) QueryBuilder {
@@ -59,11 +68,11 @@ pub fn EntityClient(comptime infos: []const TypeInfo, comptime info: TypeInfo) t
         }
 
         pub fn Update(self: Self) UpdateBuilder {
-            return UpdateBuilder.init(self.allocator, self.driver);
+            return UpdateBuilder.init(self.allocator, self.driver, self.hooks);
         }
 
         pub fn Delete(self: Self) DeleteBuilder {
-            return DeleteBuilder.init(self.allocator, self.driver);
+            return DeleteBuilder.init(self.allocator, self.driver, self.hooks);
         }
 
         /// Query target entities via an edge.

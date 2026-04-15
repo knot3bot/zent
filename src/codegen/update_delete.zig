@@ -4,6 +4,8 @@ const FieldInfo = @import("graph.zig").FieldInfo;
 const sql = @import("../sql/builder.zig");
 const sql_driver = @import("../sql/driver.zig");
 const Dialect = @import("../sql/dialect.zig").Dialect;
+const Hook = @import("../runtime/hook.zig").Hook;
+const Op = @import("../runtime/hook.zig").Op;
 
 const FieldValue = @import("create.zig").FieldValue;
 
@@ -16,11 +18,13 @@ pub fn UpdateBuilder(comptime info: TypeInfo) type {
         driver: sql_driver.Driver,
         values: std.array_list.Managed(FieldValue),
         predicates: std.array_list.Managed(sql.Predicate),
+        hooks: []const Hook,
 
-        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver) Self {
+        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver, hooks: []const Hook) Self {
             return .{
                 .allocator = allocator,
                 .driver = driver,
+                .hooks = hooks,
                 .values = std.array_list.Managed(FieldValue).init(allocator),
                 .predicates = std.array_list.Managed(sql.Predicate).init(allocator),
             };
@@ -81,6 +85,19 @@ pub fn UpdateBuilder(comptime info: TypeInfo) type {
 
         /// Execute the UPDATE and return rows affected.
         pub fn Save(self: *Self) !usize {
+            for (self.hooks) |h| {
+                if (h.op == .update) {
+                    if (h.before) |f| f(.update, info.table_name);
+                }
+            }
+            defer {
+                for (self.hooks) |h| {
+                    if (h.op == .update) {
+                        if (h.after) |f| f(.update, info.table_name);
+                    }
+                }
+            }
+
             var builder = sql.Update(self.allocator, self.driver.dialect(), info.table_name);
             defer builder.deinit();
 
@@ -173,11 +190,13 @@ pub fn DeleteBuilder(comptime info: TypeInfo) type {
         allocator: std.mem.Allocator,
         driver: sql_driver.Driver,
         predicates: std.array_list.Managed(sql.Predicate),
+        hooks: []const Hook,
 
-        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver) Self {
+        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver, hooks: []const Hook) Self {
             return .{
                 .allocator = allocator,
                 .driver = driver,
+                .hooks = hooks,
                 .predicates = std.array_list.Managed(sql.Predicate).init(allocator),
             };
         }
@@ -210,6 +229,19 @@ pub fn DeleteBuilder(comptime info: TypeInfo) type {
 
         /// Execute the DELETE and return rows affected.
         pub fn Exec(self: *Self) !usize {
+            for (self.hooks) |h| {
+                if (h.op == .delete) {
+                    if (h.before) |f| f(.delete, info.table_name);
+                }
+            }
+            defer {
+                for (self.hooks) |h| {
+                    if (h.op == .delete) {
+                        if (h.after) |f| f(.delete, info.table_name);
+                    }
+                }
+            }
+
             var builder = sql.Delete(self.allocator, self.driver.dialect(), info.table_name);
             defer builder.deinit();
 
@@ -240,7 +272,7 @@ test "Update builder basic" {
     const info = comptime fromSchema(User);
     const Upd = UpdateBuilder(info);
 
-    var u = Upd.init(std.testing.allocator, undefined);
+    var u = Upd.init(std.testing.allocator, undefined, &.{});
     defer u.deinit();
 
     _ = u.set("name", .{ .string = "bob" });
@@ -262,7 +294,7 @@ test "Delete builder basic" {
     const info = comptime fromSchema(User);
     const Del = DeleteBuilder(info);
 
-    var d = Del.init(std.testing.allocator, undefined);
+    var d = Del.init(std.testing.allocator, undefined, &.{});
     defer d.deinit();
 
     _ = d.Where(&.{sql.EQ("id", .{ .int = 1 })});

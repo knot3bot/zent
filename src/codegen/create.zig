@@ -5,6 +5,8 @@ const EdgeInfo = @import("graph.zig").EdgeInfo;
 const sql = @import("../sql/builder.zig");
 const sql_driver = @import("../sql/driver.zig");
 const Dialect = @import("../sql/dialect.zig").Dialect;
+const Hook = @import("../runtime/hook.zig").Hook;
+const Op = @import("../runtime/hook.zig").Op;
 
 /// A runtime field value entry.
 pub const FieldValue = struct {
@@ -35,16 +37,18 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
         driver: sql_driver.Driver,
         values: std.array_list.Managed(FieldValue),
         edge_values: std.array_list.Managed(EdgeValue),
+        hooks: []const Hook,
 
         const EdgeValue = struct {
             edge: []const u8,
             ids: []const i64,
         };
 
-        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver) Self {
+        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver, hooks: []const Hook) Self {
             return .{
                 .allocator = allocator,
                 .driver = driver,
+                .hooks = hooks,
                 .values = std.array_list.Managed(FieldValue).init(allocator),
                 .edge_values = std.array_list.Managed(EdgeValue).init(allocator),
             };
@@ -144,6 +148,19 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
         }
 
         pub fn Save(self: *Self) !Entity {
+            for (self.hooks) |h| {
+                if (h.op == .create) {
+                    if (h.before) |f| f(.create, info.table_name);
+                }
+            }
+            defer {
+                for (self.hooks) |h| {
+                    if (h.op == .create) {
+                        if (h.after) |f| f(.create, info.table_name);
+                    }
+                }
+            }
+
             var columns = std.array_list.Managed([]const u8).init(self.allocator);
             defer columns.deinit();
             var args = std.array_list.Managed(sql.Value).init(self.allocator);

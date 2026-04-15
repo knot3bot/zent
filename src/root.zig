@@ -23,3 +23,7 @@ pub const codegen = struct {
     pub const update_delete = @import("codegen/update_delete.zig");
     pub const client = @import("codegen/client.zig");
 };
+
+pub const runtime = struct {
+    pub const hook = @import("runtime/hook.zig");
+};
