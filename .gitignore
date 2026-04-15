@@ -1,2 +1,4 @@
 _ref/
 red.md
+.zig-cache/
+zig-out/
