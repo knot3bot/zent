@@ -716,6 +716,174 @@ pub fn Delete(allocator: std.mem.Allocator, dialect: Dialect, table: []const u8)
 }
 
 // ------------------------------------------------------------------
+// BULK UPDATE
+// ------------------------------------------------------------------
+
+pub const BulkUpdateSet = struct {
+    column: []const u8,
+    value: Value,
+};
+
+pub const BulkUpdateRow = struct {
+    id: i64,
+    sets: std.array_list.Managed(BulkUpdateSet),
+};
+
+pub const BulkUpdateBuilder = struct {
+    b: Builder,
+    table: []const u8,
+    id_column: []const u8,
+    rows: std.array_list.Managed(BulkUpdateRow),
+
+    pub fn init(allocator: std.mem.Allocator, dialect: Dialect, table: []const u8) BulkUpdateBuilder {
+        return .{
+            .b = Builder.init(allocator, dialect),
+            .table = table,
+            .id_column = "id",
+            .rows = std.array_list.Managed(BulkUpdateRow).init(allocator),
+        };
+    }
+
+    pub fn deinit(u: *BulkUpdateBuilder) void {
+        u.b.deinit();
+        for (u.rows.items) |*r| r.sets.deinit();
+        u.rows.deinit();
+    }
+
+    pub fn row(u: *BulkUpdateBuilder, id: i64) *BulkUpdateBuilder {
+        u.rows.append(.{
+            .id = id,
+            .sets = std.array_list.Managed(BulkUpdateSet).init(u.b.allocator),
+        }) catch unreachable;
+        return u;
+    }
+
+    pub fn set(u: *BulkUpdateBuilder, column: []const u8, value: Value) *BulkUpdateBuilder {
+        var current = &u.rows.items[u.rows.items.len - 1];
+        current.sets.append(.{ .column = column, .value = value }) catch unreachable;
+        return u;
+    }
+
+    pub fn query(u: *BulkUpdateBuilder) !QueryResult {
+        if (u.rows.items.len == 0) {
+            return u.b.query();
+        }
+
+        var columns = std.array_list.Managed([]const u8).init(u.b.allocator);
+        defer columns.deinit();
+        for (u.rows.items) |r| {
+            for (r.sets.items) |s| {
+                var found = false;
+                for (columns.items) |c| {
+                    if (std.mem.eql(u8, c, s.column)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) columns.append(s.column) catch unreachable;
+            }
+        }
+
+        try u.b.writeString("UPDATE ");
+        try u.b.ident(u.table);
+        try u.b.writeString(" SET ");
+
+        for (columns.items, 0..) |col, ci| {
+            if (ci > 0) try u.b.writeString(", ");
+            try u.b.ident(col);
+            try u.b.writeString(" = CASE ");
+            try u.b.ident(u.id_column);
+            for (u.rows.items) |r| {
+                for (r.sets.items) |s| {
+                    if (std.mem.eql(u8, s.column, col)) {
+                        try u.b.writeString(" WHEN ");
+                        try u.b.arg(.{ .int = r.id });
+                        try u.b.writeString(" THEN ");
+                        try u.b.arg(s.value);
+                        break;
+                    }
+                }
+            }
+            try u.b.writeString(" ELSE ");
+            try u.b.ident(col);
+            try u.b.writeString(" END");
+        }
+
+        try u.b.writeString(" WHERE ");
+        try u.b.ident(u.id_column);
+        try u.b.writeString(" IN (");
+        for (u.rows.items, 0..) |r, i| {
+            if (i > 0) try u.b.writeString(", ");
+            try u.b.arg(.{ .int = r.id });
+        }
+        try u.b.writeByte(')');
+
+        return u.b.query();
+    }
+};
+
+// ------------------------------------------------------------------
+// BULK DELETE
+// ------------------------------------------------------------------
+
+pub const BulkDeleteBuilder = struct {
+    b: Builder,
+    table: []const u8,
+    groups: std.array_list.Managed(std.array_list.Managed(Predicate)),
+
+    pub fn init(allocator: std.mem.Allocator, dialect: Dialect, table: []const u8) BulkDeleteBuilder {
+        var self = BulkDeleteBuilder{
+            .b = Builder.init(allocator, dialect),
+            .table = table,
+            .groups = std.array_list.Managed(std.array_list.Managed(Predicate)).init(allocator),
+        };
+        self.groups.append(std.array_list.Managed(Predicate).init(allocator)) catch unreachable;
+        return self;
+    }
+
+    pub fn deinit(d: *BulkDeleteBuilder) void {
+        d.b.deinit();
+        for (d.groups.items) |*g| g.deinit();
+        d.groups.deinit();
+    }
+
+    pub fn next(d: *BulkDeleteBuilder) *BulkDeleteBuilder {
+        d.groups.append(std.array_list.Managed(Predicate).init(d.b.allocator)) catch unreachable;
+        return d;
+    }
+
+    pub fn where(d: *BulkDeleteBuilder, pred: Predicate) *BulkDeleteBuilder {
+        var current = &d.groups.items[d.groups.items.len - 1];
+        current.append(pred) catch unreachable;
+        return d;
+    }
+
+    pub fn query(d: *BulkDeleteBuilder) !QueryResult {
+        try d.b.writeString("DELETE FROM ");
+        try d.b.ident(d.table);
+
+        while (d.groups.items.len > 0 and d.groups.items[d.groups.items.len - 1].items.len == 0) {
+            var last = d.groups.pop().?;
+            last.deinit();
+        }
+
+        if (d.groups.items.len > 0) {
+            try d.b.writeString(" WHERE ");
+            for (d.groups.items, 0..) |group, gi| {
+                if (gi > 0) try d.b.writeString(" OR ");
+                if (group.items.len > 1) try d.b.writeByte('(');
+                for (group.items, 0..) |pred, pi| {
+                    if (pi > 0) try d.b.writeString(" AND ");
+                    try pred.appendTo(&d.b);
+                }
+                if (group.items.len > 1) try d.b.writeByte(')');
+            }
+        }
+        return d.b.query();
+    }
+};
+
+// ------------------------------------------------------------------
 // Tests
 // ------------------------------------------------------------------
 
@@ -868,4 +1036,46 @@ test "FOR UPDATE and FOR SHARE" {
     _ = s2.from(Table("users")).forShare();
     const q2 = try s2.query();
     try std.testing.expectEqualStrings("SELECT \"id\" FROM \"users\" FOR SHARE", q2.sql);
+}
+
+test "BulkUpdate SQL generation" {
+    const allocator = std.testing.allocator;
+    var u = BulkUpdateBuilder.init(allocator, Dialect.sqlite, "users");
+    defer u.deinit();
+
+    _ = u.row(1).set("name", .{ .string = "alice" }).set("age", .{ .int = 31 });
+    _ = u.row(2).set("name", .{ .string = "bob" });
+
+    const q = try u.query();
+    try std.testing.expectEqualStrings(
+        "UPDATE \"users\" SET \"name\" = CASE \"id\" WHEN ? THEN ? WHEN ? THEN ? ELSE \"name\" END, \"age\" = CASE \"id\" WHEN ? THEN ? ELSE \"age\" END WHERE \"id\" IN (?, ?)",
+        q.sql,
+    );
+    try std.testing.expectEqual(@as(usize, 6), q.args.len);
+}
+
+test "BulkDelete SQL generation" {
+    const allocator = std.testing.allocator;
+    var d = BulkDeleteBuilder.init(allocator, Dialect.sqlite, "users");
+    defer d.deinit();
+
+    _ = d.where(EQ("id", .{ .int = 1 }));
+    _ = d.next().where(EQ("id", .{ .int = 2 }));
+
+    const q = try d.query();
+    try std.testing.expectEqualStrings("DELETE FROM \"users\" WHERE \"id\" = ? OR \"id\" = ?", q.sql);
+    try std.testing.expectEqual(@as(usize, 2), q.args.len);
+}
+
+test "BulkDelete with predicate groups" {
+    const allocator = std.testing.allocator;
+    var d = BulkDeleteBuilder.init(allocator, Dialect.sqlite, "users");
+    defer d.deinit();
+
+    _ = d.where(EQ("status", .{ .string = "inactive" })).where(GT("age", .{ .int = 30 }));
+    _ = d.next().where(EQ("status", .{ .string = "banned" }));
+
+    const q = try d.query();
+    try std.testing.expectEqualStrings("DELETE FROM \"users\" WHERE (\"status\" = ? AND \"age\" > ?) OR \"status\" = ?", q.sql);
+    try std.testing.expectEqual(@as(usize, 3), q.args.len);
 }

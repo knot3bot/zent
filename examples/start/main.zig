@@ -445,6 +445,49 @@ pub fn main() !void {
     try upd_one.SaveOne();
     std.debug.print("Updated exactly one row via SaveOne\n", .{});
 
+    // BULK UPDATE
+    std.debug.print("\n-- BULK UPDATE --\n", .{});
+    var bulk_upd = client.user.BulkUpdate();
+    defer bulk_upd.deinit();
+    _ = bulk_upd.Row(alice.id).setFieldValue("age", 40);
+    _ = bulk_upd.Row(bob.id).setFieldValue("age", 35);
+    const bulk_updated = try bulk_upd.Save();
+    std.debug.print("Bulk updated {d} row(s)\n", .{bulk_updated});
+
+    var qbulk = client.user.Query();
+    defer qbulk.deinit();
+    _ = qbulk.Where(.{user_preds.nameEQ(.{ .string = "Alice" })});
+    const bulk_alice = try qbulk.Only();
+    std.debug.print("Verified Alice age after bulk update: {d}\n", .{bulk_alice.age});
+
+    // BULK DELETE (on Car, which has no privacy policy or soft_delete)
+    std.debug.print("\n-- BULK DELETE --\n", .{});
+    var bulk_del = client.car.BulkDelete();
+    defer bulk_del.deinit();
+    _ = bulk_del.Where(.{client.car.predicates.modelEQ(.{ .string = "Tesla Model S" })});
+    _ = bulk_del.Next().Where(.{client.car.predicates.modelEQ(.{ .string = "Toyota Camry" })});
+    const bulk_deleted = try bulk_del.Exec();
+    std.debug.print("Bulk deleted {d} row(s)\n", .{bulk_deleted});
+
+    var qcars = client.car.Query();
+    defer qcars.deinit();
+    const car_count = try qcars.Count();
+    std.debug.print("Cars remaining after bulk delete: {d}\n", .{car_count});
+
+    // IMMUTABLE field demo
+    std.debug.print("\n-- IMMUTABLE FIELD --\n", .{});
+    var ug_upd = client.user_group.Update();
+    defer ug_upd.deinit();
+    _ = ug_upd.set("joined_at", .{ .int = 9999 }).Where(.{client.user_group.predicates.user_idEQ(.{ .int = ug.user_id })});
+    const ug_updated = ug_upd.Save() catch |err| switch (err) {
+        error.ImmutableField => blk: {
+            std.debug.print("Update of immutable field denied (expected)\n", .{});
+            break :blk @as(usize, 0);
+        },
+        else => return err,
+    };
+    std.debug.print("Updated {d} row(s)\n", .{ug_updated});
+
     // DELETE (should be denied by privacy policy)
     std.debug.print("\n-- DELETE (Privacy Policy Demo) --\n", .{});
     var del = client.user.Delete();

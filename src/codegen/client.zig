@@ -13,6 +13,8 @@ const BulkInsertGen = @import("create.zig").BulkInsertBuilder;
 const QueryGen = @import("query.zig").QueryBuilder;
 const UpdateGen = @import("update_delete.zig").UpdateBuilder;
 const DeleteGen = @import("update_delete.zig").DeleteBuilder;
+const BulkUpdateGen = @import("update_delete.zig").BulkUpdateBuilder;
+const BulkDeleteGen = @import("update_delete.zig").BulkDeleteBuilder;
 const PredGen = @import("predicate.zig").makePredicates;
 const MetaGen = @import("meta.zig").Meta;
 
@@ -35,6 +37,8 @@ pub fn EntityClient(comptime infos: []const TypeInfo, comptime info: TypeInfo) t
     const QueryBuilder = QueryGen(infos, info, Entity);
     const UpdateBuilder = UpdateGen(info);
     const DeleteBuilder = DeleteGen(info);
+    const BulkUpdateBuilder = BulkUpdateGen(info);
+    const BulkDeleteBuilder = BulkDeleteGen(info);
     const Predicates = comptime PredGen(info);
     const Meta = comptime MetaGen(info);
 
@@ -83,6 +87,16 @@ pub fn EntityClient(comptime infos: []const TypeInfo, comptime info: TypeInfo) t
         pub fn Delete(self: Self) DeleteBuilder {
             if (info.is_view) @compileError("Delete is not supported for view entities");
             return DeleteBuilder.init(self.allocator, self.driver, self.hooks);
+        }
+
+        pub fn BulkUpdate(self: Self) BulkUpdateBuilder {
+            if (info.is_view) @compileError("BulkUpdate is not supported for view entities");
+            return BulkUpdateBuilder.init(self.allocator, self.driver, self.hooks);
+        }
+
+        pub fn BulkDelete(self: Self) BulkDeleteBuilder {
+            if (info.is_view) @compileError("BulkDelete is not supported for view entities");
+            return BulkDeleteBuilder.init(self.allocator, self.driver, self.hooks);
         }
 
         /// Query target entities via an edge.

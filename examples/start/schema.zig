@@ -58,7 +58,7 @@ pub const UserGroup = Schema("UserGroup", .{
     .fields = &.{
         field.Int("user_id"),
         field.Int("group_id"),
-        field.Time("joined_at").Optional(),
+        field.Time("joined_at").Optional().Immutable(),
     },
 });
 

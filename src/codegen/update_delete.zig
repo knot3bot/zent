@@ -11,6 +11,66 @@ const privacy = @import("../privacy/policy.zig");
 const FieldValue = @import("create.zig").FieldValue;
 const validateSqlValue = @import("create.zig").validateSqlValue;
 
+fn isStringLike(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => |ptr| {
+            if (ptr.size == .slice and ptr.child == u8) return true;
+            if (ptr.size == .one) {
+                return switch (@typeInfo(ptr.child)) {
+                    .array => |arr| arr.child == u8,
+                    else => false,
+                };
+            }
+            return false;
+        },
+        .array => |arr| arr.child == u8,
+        else => false,
+    };
+}
+
+fn canSetField(comptime Expected: type, Actual: type) bool {
+    const Unwrapped = if (@typeInfo(Expected) == .optional)
+        @typeInfo(Expected).optional.child
+    else
+        Expected;
+
+    if (Expected == Actual) return true;
+    if (Unwrapped == i64 and Actual == comptime_int) return true;
+    if (Unwrapped == f64 and Actual == comptime_float) return true;
+    if (Unwrapped == []const u8) {
+        return switch (@typeInfo(Actual)) {
+            .pointer => |ptr| {
+                if (ptr.child == u8 and ptr.size == .slice) return true;
+                if (ptr.size == .one) {
+                    return switch (@typeInfo(ptr.child)) {
+                        .array => |arr| arr.child == u8,
+                        else => false,
+                    };
+                }
+                return false;
+            },
+            .array => |arr| arr.child == u8,
+            else => false,
+        };
+    }
+    return false;
+}
+
+fn toSqlValue(v: anytype) sql.Value {
+    const T = @TypeOf(v);
+    if (T == comptime_int) return .{ .int = v };
+    if (T == comptime_float) return .{ .float = v };
+    return switch (@typeInfo(T)) {
+        .bool => .{ .bool = v },
+        .int => .{ .int = v },
+        .float => .{ .float = v },
+        else => {
+            if (isStringLike(T)) return .{ .string = v };
+            @compileError("Unsupported value type: " ++ @typeName(T));
+        },
+    };
+}
+
 /// Generate an Update builder for an entity.
 pub fn UpdateBuilder(comptime info: TypeInfo) type {
     return struct {
@@ -72,6 +132,7 @@ pub fn UpdateBuilder(comptime info: TypeInfo) type {
                         if (f.field_type == .json and @typeInfo(Actual) == .@"struct") {
                             needs_json = true;
                         }
+                        if (f.immutable) @compileError("Field is immutable: " ++ field_name);
                         found = true;
                         break;
                     }
@@ -134,6 +195,7 @@ pub fn UpdateBuilder(comptime info: TypeInfo) type {
                 inline for (info.fields) |f| {
                     if (std.mem.eql(u8, f.name, fv.name)) {
                         try validateSqlValue(f, fv.value);
+                        if (f.immutable) return error.ImmutableField;
                     }
                 }
             }
@@ -159,72 +221,6 @@ pub fn UpdateBuilder(comptime info: TypeInfo) type {
             const affected = try self.Save();
             if (affected == 0) return error.NotFound;
             if (affected > 1) return error.NotSingular;
-        }
-
-        fn isStringLike(comptime T: type) bool {
-            return switch (@typeInfo(T)) {
-                .pointer => |ptr| {
-                    if (ptr.size == .slice and ptr.child == u8) return true;
-                    // Check for pointers to u8 arrays like *const [N:0]u8
-                    if (ptr.size == .one) {
-                        return switch (@typeInfo(ptr.child)) {
-                            .array => |arr| arr.child == u8,
-                            else => false,
-                        };
-                    }
-                    return false;
-                },
-                .array => |arr| arr.child == u8,
-                else => false,
-            };
-        }
-
-        fn canSetField(comptime Expected: type, Actual: type) bool {
-            // Unwrap optional type for comparison
-            const Unwrapped = if (@typeInfo(Expected) == .optional)
-                @typeInfo(Expected).optional.child
-            else
-                Expected;
-
-            // Direct match
-            if (Expected == Actual) return true;
-            // int literals
-            if (Unwrapped == i64 and Actual == comptime_int) return true;
-            if (Unwrapped == f64 and Actual == comptime_float) return true;
-            // String types - check various pointer/array forms
-            if (Unwrapped == []const u8) {
-                return switch (@typeInfo(Actual)) {
-                    .pointer => |ptr| {
-                        if (ptr.child == u8 and ptr.size == .slice) return true;
-                        // Check for pointers to u8 arrays like *const [N:0]u8
-                        if (ptr.size == .one) {
-                            return switch (@typeInfo(ptr.child)) {
-                                .array => |arr| arr.child == u8,
-                                else => false,
-                            };
-                        }
-                        return false;
-                    },
-                    .array => |arr| arr.child == u8,
-                    else => false,
-                };
-            }
-            return false;
-        }
-
-        fn toSqlValue(v: anytype) sql.Value {
-            const T = @TypeOf(v);
-            if (T == comptime_int) return .{ .int = v };
-            if (T == comptime_float) return .{ .float = v };
-            return switch (@typeInfo(T)) {
-                .bool => .{ .bool = v },
-                .int => .{ .int = v },
-                .float => .{ .float = v },
-                else => {
-                    if (isStringLike(T)) return .{ .string = v };
-                    @compileError("Unsupported value type: " ++ @typeName(T));
-                },
-            };
         }
     };
 }
@@ -368,6 +364,216 @@ pub fn DeleteBuilder(comptime info: TypeInfo) type {
     };
 }
 
+/// Generate a Bulk Update builder for an entity.
+/// Updates multiple rows in a single statement using CASE WHEN.
+pub fn BulkUpdateBuilder(comptime info: TypeInfo) type {
+    return struct {
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        driver: sql_driver.Driver,
+        b: sql.BulkUpdateBuilder,
+        json_strings: std.array_list.Managed([]const u8),
+        hooks: []const Hook,
+
+        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver, hooks: []const Hook) Self {
+            return .{
+                .allocator = allocator,
+                .driver = driver,
+                .hooks = hooks,
+                .b = sql.BulkUpdateBuilder.init(allocator, driver.dialect(), info.table_name),
+                .json_strings = std.array_list.Managed([]const u8).init(allocator),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            for (self.json_strings.items) |s| self.allocator.free(s);
+            self.json_strings.deinit();
+            self.b.deinit();
+        }
+
+        /// Start a new row with the given id.
+        pub fn Row(self: *Self, id: i64) *Self {
+            _ = self.b.row(id);
+            return self;
+        }
+
+        /// Set a field value dynamically (no compile-time checking).
+        pub fn set(self: *Self, field_name: []const u8, value: sql.Value) *Self {
+            _ = self.b.set(field_name, value);
+            return self;
+        }
+
+        /// Set a field value with compile-time name and type checking.
+        pub fn setFieldValue(self: *Self, comptime field_name: []const u8, value: anytype) *Self {
+            comptime var needs_json = false;
+            comptime {
+                var found = false;
+                for (info.fields) |f| {
+                    if (std.mem.eql(u8, f.name, field_name)) {
+                        const Expected = f.zig_type;
+                        const Actual = @TypeOf(value);
+                        if (!canSetField(Expected, Actual)) {
+                            @compileError("Type mismatch for field '" ++ field_name ++ "': expected " ++ @typeName(Expected) ++ ", got " ++ @typeName(Actual));
+                        }
+                        if (f.field_type == .enum_ and f.enum_values.len > 0) {
+                            const actual_info = @typeInfo(Actual);
+                            if (actual_info == .array and actual_info.array.child == u8) {
+                                var valid = false;
+                                for (f.enum_values) |ev| {
+                                    if (std.mem.eql(u8, ev, value)) valid = true;
+                                }
+                                if (!valid) @compileError("Invalid enum value for field '" ++ field_name ++ "': '" ++ value ++ "'");
+                            }
+                        }
+                        if (f.field_type == .json and @typeInfo(Actual) == .@"struct") {
+                            needs_json = true;
+                        }
+                        if (f.immutable) @compileError("Field is immutable: " ++ field_name);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) @compileError("Unknown field: " ++ field_name);
+            }
+
+            if (comptime needs_json) {
+                const json_str = std.json.Stringify.valueAlloc(self.allocator, value, .{}) catch unreachable;
+                self.json_strings.append(json_str) catch unreachable;
+                return self.set(field_name, .{ .string = json_str });
+            }
+
+            return self.set(field_name, toSqlValue(value));
+        }
+
+        /// Execute the bulk UPDATE and return rows affected.
+        pub fn Save(self: *Self) !usize {
+            if (info.policy) |p| {
+                if (p.evalMutation(.update, info.table_name) == .deny) {
+                    return error.PrivacyDenied;
+                }
+            }
+            for (self.hooks) |h| {
+                if (h.op == .update) {
+                    if (h.before) |f| f(.update, info.table_name);
+                }
+            }
+            defer {
+                for (self.hooks) |h| {
+                    if (h.op == .update) {
+                        if (h.after) |f| f(.update, info.table_name);
+                    }
+                }
+            }
+
+            if (self.b.rows.items.len == 0) return 0;
+
+            for (self.b.rows.items) |r| {
+                for (r.sets.items) |s| {
+                    inline for (info.fields) |f| {
+                        if (std.mem.eql(u8, f.name, s.column)) {
+                            try validateSqlValue(f, s.value);
+                            if (f.immutable) return error.ImmutableField;
+                        }
+                    }
+                }
+            }
+
+            const q = try self.b.query();
+            const res = try self.driver.exec(q.sql, q.args);
+            return res.rows_affected;
+        }
+    };
+}
+
+/// Generate a Bulk Delete builder for an entity.
+pub fn BulkDeleteBuilder(comptime info: TypeInfo) type {
+    return struct {
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        driver: sql_driver.Driver,
+        b: sql.BulkDeleteBuilder,
+        hooks: []const Hook,
+
+        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver, hooks: []const Hook) Self {
+            return .{
+                .allocator = allocator,
+                .driver = driver,
+                .hooks = hooks,
+                .b = sql.BulkDeleteBuilder.init(allocator, driver.dialect(), info.table_name),
+            };
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.b.deinit();
+        }
+
+        /// Start a new predicate group for the next row to delete.
+        pub fn Next(self: *Self) *Self {
+            _ = self.b.next();
+            return self;
+        }
+
+        /// Add predicates for the current row's WHERE clause.
+        /// Groups are ORed together in the final DELETE.
+        pub fn Where(self: *Self, predicates: anytype) *Self {
+            switch (@typeInfo(@TypeOf(predicates))) {
+                .pointer, .array => {
+                    for (predicates) |p| {
+                        _ = self.b.where(p);
+                    }
+                },
+                .@"struct" => |s| {
+                    if (s.is_tuple) {
+                        inline for (predicates) |p| {
+                            _ = self.b.where(p);
+                        }
+                    } else {
+                        @compileError("Where expects a tuple or slice of sql.Predicate");
+                    }
+                },
+                else => @compileError("Where expects a tuple or slice of sql.Predicate"),
+            }
+            return self;
+        }
+
+        /// Execute the bulk DELETE and return rows affected.
+        pub fn Exec(self: *Self) !usize {
+            if (info.soft_delete) {
+                @compileError("BulkDelete does not support soft_delete entities; use Update or individual Delete");
+            }
+            return self.execHardDelete();
+        }
+
+        fn execHardDelete(self: *Self) !usize {
+            if (info.policy) |p| {
+                if (p.evalMutation(.delete, info.table_name) == .deny) {
+                    return error.PrivacyDenied;
+                }
+            }
+            for (self.hooks) |h| {
+                if (h.op == .delete) {
+                    if (h.before) |f| f(.delete, info.table_name);
+                }
+            }
+            defer {
+                for (self.hooks) |h| {
+                    if (h.op == .delete) {
+                        if (h.after) |f| f(.delete, info.table_name);
+                    }
+                }
+            }
+
+            if (self.b.groups.items.len == 0) return 0;
+
+            const q = try self.b.query();
+            const res = try self.driver.exec(q.sql, q.args);
+            return res.rows_affected;
+        }
+    };
+}
+
 // ------------------------------------------------------------------
 // Tests
 // ------------------------------------------------------------------
@@ -437,4 +643,52 @@ test "Update builder SaveOne and Delete builder ExecOne compile" {
     // Compilation check only; actual execution requires a real driver.
     try std.testing.expectEqual(@as(usize, 1), u.values.items.len);
     try std.testing.expectEqual(@as(usize, 1), d.predicates.items.len);
+}
+
+test "BulkUpdate builder basic" {
+    const field = @import("../core/field.zig");
+    const schema = @import("../core/schema.zig").Schema;
+    const fromSchema = @import("graph.zig").fromSchema;
+
+    const User = schema("User", .{
+        .fields = &.{ field.String("name"), field.Int("age") },
+    });
+
+    const info = comptime fromSchema(User);
+    const BulkUpd = BulkUpdateBuilder(info);
+
+    var u = BulkUpd.init(std.testing.allocator, undefined, &.{});
+    defer u.deinit();
+
+    _ = u.Row(1).setFieldValue("name", "alice").setFieldValue("age", 31);
+    _ = u.Row(2).setFieldValue("name", "bob");
+
+    try std.testing.expectEqual(@as(usize, 2), u.b.rows.items.len);
+    try std.testing.expectEqual(@as(i64, 1), u.b.rows.items[0].id);
+    try std.testing.expectEqual(@as(i64, 2), u.b.rows.items[1].id);
+    try std.testing.expectEqual(@as(usize, 2), u.b.rows.items[0].sets.items.len);
+    try std.testing.expectEqual(@as(usize, 1), u.b.rows.items[1].sets.items.len);
+}
+
+test "BulkDelete builder basic" {
+    const field = @import("../core/field.zig");
+    const schema = @import("../core/schema.zig").Schema;
+    const fromSchema = @import("graph.zig").fromSchema;
+
+    const User = schema("User", .{
+        .fields = &.{ field.String("name"), field.Int("age") },
+    });
+
+    const info = comptime fromSchema(User);
+    const BulkDel = BulkDeleteBuilder(info);
+
+    var d = BulkDel.init(std.testing.allocator, undefined, &.{});
+    defer d.deinit();
+
+    _ = d.Where(&.{sql.EQ("id", .{ .int = 1 })});
+    _ = d.Next().Where(&.{sql.EQ("id", .{ .int = 2 })});
+
+    try std.testing.expectEqual(@as(usize, 2), d.b.groups.items.len);
+    try std.testing.expectEqual(@as(usize, 1), d.b.groups.items[0].items.len);
+    try std.testing.expectEqual(@as(usize, 1), d.b.groups.items[1].items.len);
 }
