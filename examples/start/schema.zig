@@ -9,12 +9,17 @@ pub const UserSettings = struct {
     notifications: bool,
 };
 
+fn denyDelete(op: zent.privacy.Op, _: []const u8) zent.privacy.Decision {
+    return if (op == .delete) .deny else .allow;
+}
+
 fn withEdges(comptime Base: type, comptime es: []const edge.Edge) type {
     return struct {
         pub const schema_name = Base.schema_name;
         pub const fields = Base.fields;
         pub const edges = es;
         pub const indexes = Base.indexes;
+        pub const policy = if (@hasDecl(Base, "policy")) Base.policy else null;
     };
 }
 
@@ -39,6 +44,9 @@ const UserBase = Schema("User", .{
         field.JSON("settings", UserSettings),
     },
     .mixins = &.{zent.core.mixin.TimeMixin},
+    .policy = zent.privacy.Policy{
+        .mutation = denyDelete,
+    },
 });
 
 // M2M is declared with To on both sides.

@@ -216,18 +216,24 @@ pub fn main() !void {
     const updated = try upd.Save();
     std.debug.print("Updated {d} row(s)\n", .{updated});
 
-    // DELETE
-    std.debug.print("\n-- DELETE --\n", .{});
+    // DELETE (should be denied by privacy policy)
+    std.debug.print("\n-- DELETE (Privacy Policy Demo) --\n", .{});
     var del = client.user.Delete();
     defer del.deinit();
     _ = del.Where(.{user_preds.nameEQ(.{ .string = "Bob" })});
-    const deleted = try del.Exec();
+    const deleted = del.Exec() catch |err| switch (err) {
+        error.PrivacyDenied => blk: {
+            std.debug.print("Delete denied by privacy policy (OnDelete)\n", .{});
+            break :blk @as(usize, 0);
+        },
+        else => return err,
+    };
     std.debug.print("Deleted {d} row(s)\n", .{deleted});
 
     var q4 = client.user.Query();
     defer q4.deinit();
     const count_after = try q4.Count();
-    std.debug.print("Users after delete: {d}\n", .{count_after});
+    std.debug.print("Users after delete attempt: {d}\n", .{count_after});
 
     std.debug.print("\nAll phases (0-4) completed successfully.\n", .{});
 }

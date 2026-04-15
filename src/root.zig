@@ -27,3 +27,5 @@ pub const codegen = struct {
 pub const runtime = struct {
     pub const hook = @import("runtime/hook.zig");
 };
+
+pub const privacy = @import("privacy/policy.zig");

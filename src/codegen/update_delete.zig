@@ -6,6 +6,7 @@ const sql_driver = @import("../sql/driver.zig");
 const Dialect = @import("../sql/dialect.zig").Dialect;
 const Hook = @import("../runtime/hook.zig").Hook;
 const Op = @import("../runtime/hook.zig").Op;
+const privacy = @import("../privacy/policy.zig");
 
 const FieldValue = @import("create.zig").FieldValue;
 
@@ -110,6 +111,11 @@ pub fn UpdateBuilder(comptime info: TypeInfo) type {
 
         /// Execute the UPDATE and return rows affected.
         pub fn Save(self: *Self) !usize {
+            if (info.policy) |p| {
+                if (p.evalMutation(.update, info.table_name) == .deny) {
+                    return error.PrivacyDenied;
+                }
+            }
             for (self.hooks) |h| {
                 if (h.op == .update) {
                     if (h.before) |f| f(.update, info.table_name);
@@ -254,6 +260,11 @@ pub fn DeleteBuilder(comptime info: TypeInfo) type {
 
         /// Execute the DELETE and return rows affected.
         pub fn Exec(self: *Self) !usize {
+            if (info.policy) |p| {
+                if (p.evalMutation(.delete, info.table_name) == .deny) {
+                    return error.PrivacyDenied;
+                }
+            }
             for (self.hooks) |h| {
                 if (h.op == .delete) {
                     if (h.before) |f| f(.delete, info.table_name);

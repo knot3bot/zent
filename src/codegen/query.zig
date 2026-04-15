@@ -6,6 +6,7 @@ const sql = @import("../sql/builder.zig");
 const sql_driver = @import("../sql/driver.zig");
 const sql_scan = @import("../sql/scan.zig");
 const Dialect = @import("../sql/dialect.zig").Dialect;
+const privacy = @import("../privacy/policy.zig");
 
 /// Generate a Query builder for an entity.
 pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
@@ -73,7 +74,16 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
             return self;
         }
 
+        fn checkPolicy(comptime op: privacy.Op) !void {
+            if (info.policy) |p| {
+                if (p.evalQuery(op, info.table_name) == .deny) {
+                    return error.PrivacyDenied;
+                }
+            }
+        }
+
         pub fn All(self: *Self) !std.array_list.Managed(Entity) {
+            try checkPolicy(.query);
             const q = try self.buildQuery(info.fields.len);
             var rows = try self.driver.query(q.sql, q.args);
             defer rows.deinit();
@@ -89,6 +99,7 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
         }
 
         pub fn First(self: *Self) !?Entity {
+            try checkPolicy(.query);
             self.limit_val = 1;
             const q = try self.buildQuery(info.fields.len);
             var rows = try self.driver.query(q.sql, q.args);
@@ -99,6 +110,7 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
         }
 
         pub fn Only(self: *Self) !Entity {
+            try checkPolicy(.query);
             const q = try self.buildQuery(info.fields.len);
             var rows = try self.driver.query(q.sql, q.args);
             defer rows.deinit();
@@ -110,6 +122,7 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
         }
 
         pub fn IDs(self: *Self) !std.array_list.Managed(i64) {
+            try checkPolicy(.query);
             const q = try self.buildQuery(1); // only id column
             var rows = try self.driver.query(q.sql, q.args);
             defer rows.deinit();
@@ -125,6 +138,7 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
         }
 
         pub fn Count(self: *Self) !i64 {
+            try checkPolicy(.query);
             const q = try self.buildCountQuery();
             var rows = try self.driver.query(q.sql, q.args);
             defer rows.deinit();
@@ -134,6 +148,7 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
         }
 
         pub fn Exist(self: *Self) !bool {
+            try checkPolicy(.query);
             self.limit_val = 1;
             const q = try self.buildQuery(1);
             var rows = try self.driver.query(q.sql, q.args);

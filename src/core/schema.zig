@@ -35,22 +35,42 @@ fn mergeMixinIndexes(comptime base: []const @import("index.zig").Index, comptime
     }
 }
 
+fn mergeMixinPolicies(comptime base: ?@import("../privacy/policy.zig").Policy, comptime mixins: []const type) ?@import("../privacy/policy.zig").Policy {
+    comptime {
+        var result = base;
+        for (mixins) |M| {
+            if (@hasDecl(M, "policy")) {
+                if (result) |*r| {
+                    if (M.policy.query) |q| r.query = q;
+                    if (M.policy.mutation) |m| r.mutation = m;
+                } else {
+                    result = M.policy;
+                }
+            }
+        }
+        return result;
+    }
+}
+
 /// Schema factory. Returns an opaque type that carries comptime metadata.
 pub fn Schema(comptime name: []const u8, comptime config: struct {
     fields: []const @import("field.zig").Field = &.{},
     edges: []const @import("edge.zig").Edge = &.{},
     indexes: []const @import("index.zig").Index = &.{},
     mixins: []const type = &.{},
+    policy: ?@import("../privacy/policy.zig").Policy = null,
 }) type {
     const all_fields = mergeMixinFields(config.fields, config.mixins);
     const all_edges = mergeMixinEdges(config.edges, config.mixins);
     const all_indexes = mergeMixinIndexes(config.indexes, config.mixins);
+    const all_policy = mergeMixinPolicies(config.policy, config.mixins);
 
     return struct {
         pub const schema_name = name;
         pub const fields = all_fields;
         pub const edges = all_edges;
         pub const indexes = all_indexes;
+        pub const policy = all_policy;
     };
 }
 

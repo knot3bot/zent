@@ -7,6 +7,7 @@ const sql_driver = @import("../sql/driver.zig");
 const Dialect = @import("../sql/dialect.zig").Dialect;
 const Hook = @import("../runtime/hook.zig").Hook;
 const Op = @import("../runtime/hook.zig").Op;
+const privacy = @import("../privacy/policy.zig");
 
 /// A runtime field value entry.
 pub const FieldValue = struct {
@@ -173,6 +174,11 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
         }
 
         pub fn Save(self: *Self) !Entity {
+            if (info.policy) |p| {
+                if (p.evalMutation(.create, info.table_name) == .deny) {
+                    return error.PrivacyDenied;
+                }
+            }
             for (self.hooks) |h| {
                 if (h.op == .create) {
                     if (h.before) |f| f(.create, info.table_name);

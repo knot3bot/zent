@@ -3,6 +3,7 @@ const field_mod = @import("../core/field.zig");
 const edge_mod = @import("../core/edge.zig");
 const index_mod = @import("../core/index.zig");
 const Dialect = @import("../sql/dialect.zig").Dialect;
+const Policy = @import("../privacy/policy.zig").Policy;
 
 pub const FieldInfo = struct {
     name: []const u8,
@@ -45,6 +46,7 @@ pub const TypeInfo = struct {
     fields: []const FieldInfo,
     edges: []const EdgeInfo,
     indexes: []const IndexInfo,
+    policy: ?Policy = null,
 };
 
 /// Build a TypeInfo from a schema type at comptime.
@@ -53,6 +55,7 @@ pub fn fromSchema(comptime S: type) TypeInfo {
         const schema_fields = S.fields;
         const schema_edges = S.edges;
         const schema_indexes = S.indexes;
+        const schema_policy = if (@hasDecl(S, "policy")) S.policy else null;
         const name = S.schema_name;
 
         // Auto-inject ID if not present.
@@ -84,6 +87,7 @@ pub fn fromSchema(comptime S: type) TypeInfo {
             .fields = fields,
             .edges = edges,
             .indexes = indexes,
+            .policy = schema_policy,
         };
     }
 }
@@ -286,6 +290,7 @@ pub fn resolveGraphEdges(comptime infos: []const TypeInfo) []const TypeInfo {
                 .fields = info.fields,
                 .edges = resolved_edges,
                 .indexes = info.indexes,
+                .policy = info.policy,
             }};
         }
         return result;
@@ -375,6 +380,7 @@ fn addEdgeFields(comptime info: TypeInfo, comptime all_infos: []const TypeInfo) 
             .fields = fields,
             .edges = info.edges,
             .indexes = info.indexes,
+            .policy = info.policy,
         };
     }
 }
