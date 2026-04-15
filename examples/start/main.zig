@@ -345,6 +345,30 @@ pub fn main() !void {
     defer distinct_users.deinit();
     std.debug.print("Distinct users: {d}\n", .{distinct_users.items.len});
 
+    // GROUP BY
+    std.debug.print("\n-- GROUP BY --\n", .{});
+    var qg = client.user.Query();
+    defer qg.deinit();
+    _ = qg.GroupBy(&.{"status"});
+    var grouped = try qg.All();
+    defer grouped.deinit();
+    std.debug.print("Unique statuses: {d}\n", .{grouped.items.len});
+    for (grouped.items) |u| {
+        std.debug.print("  status={s}\n", .{u.status});
+    }
+
+    // HAVING
+    std.debug.print("\n-- HAVING --\n", .{});
+    var qh = client.user.Query();
+    defer qh.deinit();
+    _ = qh.GroupBy(&.{"status"}).Having(sql.GTE("COUNT(*)", .{ .int = 2 }));
+    var having = try qh.All();
+    defer having.deinit();
+    std.debug.print("Statuses with >= 2 users: {d}\n", .{having.items.len});
+    for (having.items) |u| {
+        std.debug.print("  status={s}\n", .{u.status});
+    }
+
     // BULK INSERT
     std.debug.print("\n-- BULK INSERT --\n", .{});
     var bulk = client.user.BulkInsert();

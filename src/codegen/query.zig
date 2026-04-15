@@ -92,6 +92,8 @@ pub fn QueryBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, c
         distinct: bool,
         with_trashed: bool,
         with_edges: std.ArrayListUnmanaged([]const u8),
+        group_cols: std.ArrayListUnmanaged([]const u8),
+        having_pred: ?sql.Predicate,
 
         pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver) Self {
             return .{
@@ -104,6 +106,8 @@ pub fn QueryBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, c
                 .distinct = false,
                 .with_trashed = false,
                 .with_edges = .empty,
+                .group_cols = .empty,
+                .having_pred = null,
             };
         }
 
@@ -111,6 +115,7 @@ pub fn QueryBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, c
             self.predicates.deinit();
             self.order_terms.deinit();
             self.with_edges.deinit(self.allocator);
+            self.group_cols.deinit(self.allocator);
         }
 
         pub fn Where(self: *Self, predicates: anytype) *Self {
@@ -170,6 +175,18 @@ pub fn QueryBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, c
         pub fn WithEdge(self: *Self, comptime edge_name: []const u8) *Self {
             _ = comptime findEdgeInfo(info, edge_name);
             self.with_edges.append(self.allocator, edge_name) catch unreachable;
+            return self;
+        }
+
+        pub fn GroupBy(self: *Self, columns: []const []const u8) *Self {
+            for (columns) |c| {
+                self.group_cols.append(self.allocator, c) catch unreachable;
+            }
+            return self;
+        }
+
+        pub fn Having(self: *Self, pred: sql.Predicate) *Self {
+            self.having_pred = pred;
             return self;
         }
 
@@ -411,6 +428,12 @@ pub fn QueryBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, c
             if (info.soft_delete and !self.with_trashed) {
                 _ = selector.where(sql.IsNull("deleted_at"));
             }
+            if (self.group_cols.items.len > 0) {
+                _ = selector.groupBy(self.group_cols.items);
+            }
+            if (self.having_pred) |pred| {
+                _ = selector.having(pred);
+            }
             if (self.order_terms.items.len > 0) {
                 for (self.order_terms.items) |term| {
                     _ = selector.orderBy(term);
@@ -439,6 +462,12 @@ pub fn QueryBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, c
             if (info.soft_delete and !self.with_trashed) {
                 _ = selector.where(sql.IsNull("deleted_at"));
             }
+            if (self.group_cols.items.len > 0) {
+                _ = selector.groupBy(self.group_cols.items);
+            }
+            if (self.having_pred) |pred| {
+                _ = selector.having(pred);
+            }
             return try selector.query();
         }
 
@@ -454,6 +483,12 @@ pub fn QueryBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, c
             }
             if (info.soft_delete and !self.with_trashed) {
                 _ = selector.where(sql.IsNull("deleted_at"));
+            }
+            if (self.group_cols.items.len > 0) {
+                _ = selector.groupBy(self.group_cols.items);
+            }
+            if (self.having_pred) |pred| {
+                _ = selector.having(pred);
             }
             if (self.limit_val) |n| {
                 _ = selector.limit(n);
@@ -520,4 +555,27 @@ test "Query builder WithEdge compiles" {
     _ = q.WithEdge("cars");
     try std.testing.expectEqual(@as(usize, 1), q.with_edges.items.len);
     try std.testing.expectEqualStrings("cars", q.with_edges.items[0]);
+}
+
+test "Query builder GroupBy and Having" {
+    const field = @import("../core/field.zig");
+    const schema = @import("../core/schema.zig").Schema;
+    const fromSchema = @import("graph.zig").fromSchema;
+    const EntityGenerator = @import("entity.zig").Entity;
+
+    const User = schema("User", .{
+        .fields = &.{ field.String("name"), field.Int("age") },
+    });
+
+    const info = comptime fromSchema(User);
+    const infos = &[_]TypeInfo{info};
+    const UserEntity = comptime EntityGenerator(infos, info);
+    const UserQuery = QueryBuilder(infos, info, UserEntity);
+
+    var q = UserQuery.init(std.testing.allocator, undefined);
+    defer q.deinit();
+
+    _ = q.GroupBy(&.{"age"}).Having(sql.GT("COUNT(*)", .{ .int = 1 }));
+    try std.testing.expectEqual(@as(usize, 1), q.group_cols.items.len);
+    try std.testing.expectEqualStrings("age", q.group_cols.items[0]);
 }
