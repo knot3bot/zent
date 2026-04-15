@@ -156,6 +156,50 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
             return rows.next() != null;
         }
 
+        pub fn Sum(self: *Self, comptime field_name: []const u8) !i64 {
+            try checkPolicy(.query);
+            const q = try self.buildAggregateQuery("SUM(\"" ++ field_name ++ "\")");
+            var rows = try self.driver.query(q.sql, q.args);
+            defer rows.deinit();
+            const row = rows.next() orelse return error.NotFound;
+            return row.getInt(0) orelse return error.TypeMismatch;
+        }
+
+        pub fn Avg(self: *Self, comptime field_name: []const u8) !f64 {
+            try checkPolicy(.query);
+            const q = try self.buildAggregateQuery("AVG(\"" ++ field_name ++ "\")");
+            var rows = try self.driver.query(q.sql, q.args);
+            defer rows.deinit();
+            const row = rows.next() orelse return error.NotFound;
+            return row.getFloat(0) orelse return error.TypeMismatch;
+        }
+
+        pub fn Max(self: *Self, comptime field_name: []const u8) !sql.Value {
+            try checkPolicy(.query);
+            const q = try self.buildAggregateQuery("MAX(\"" ++ field_name ++ "\")");
+            var rows = try self.driver.query(q.sql, q.args);
+            defer rows.deinit();
+            const row = rows.next() orelse return error.NotFound;
+            if (row.isNull(0)) return .null;
+            if (row.getInt(0)) |v| return .{ .int = v };
+            if (row.getFloat(0)) |v| return .{ .float = v };
+            if (row.getText(0)) |v| return .{ .string = v };
+            return error.TypeMismatch;
+        }
+
+        pub fn Min(self: *Self, comptime field_name: []const u8) !sql.Value {
+            try checkPolicy(.query);
+            const q = try self.buildAggregateQuery("MIN(\"" ++ field_name ++ "\")");
+            var rows = try self.driver.query(q.sql, q.args);
+            defer rows.deinit();
+            const row = rows.next() orelse return error.NotFound;
+            if (row.isNull(0)) return .null;
+            if (row.getInt(0)) |v| return .{ .int = v };
+            if (row.getFloat(0)) |v| return .{ .float = v };
+            if (row.getText(0)) |v| return .{ .string = v };
+            return error.TypeMismatch;
+        }
+
         fn buildQuery(self: *Self, comptime column_count: usize) !sql.QueryResult {
             const t = sql.Table(info.table_name);
             var columns: [column_count]sql.ColumnRef = undefined;
@@ -195,6 +239,25 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
                 for (self.predicates.items) |pred| {
                     _ = selector.where(pred);
                 }
+            }
+            return try selector.query();
+        }
+
+        fn buildAggregateQuery(self: *Self, comptime agg_expr: []const u8) !sql.QueryResult {
+            const t = sql.Table(info.table_name);
+            const agg_col = sql.ColumnRef{ .table = null, .name = agg_expr, .raw = true };
+            var selector = sql.Select(self.allocator, self.driver.dialect(), &.{agg_col});
+            _ = selector.from(t);
+            if (self.predicates.items.len > 0) {
+                for (self.predicates.items) |pred| {
+                    _ = selector.where(pred);
+                }
+            }
+            if (self.limit_val) |n| {
+                _ = selector.limit(n);
+            }
+            if (self.offset_val) |n| {
+                _ = selector.offset(n);
             }
             return try selector.query();
         }

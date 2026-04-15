@@ -266,6 +266,28 @@ pub fn main() !void {
     const count = try q3.Count();
     std.debug.print("\nTotal users: {d}\n", .{count});
 
+    // AGGREGATION
+    std.debug.print("\n-- AGGREGATION --\n", .{});
+    var qagg = client.user.Query();
+    defer qagg.deinit();
+    const age_sum = try qagg.Sum("age");
+    std.debug.print("Sum of ages: {d}\n", .{age_sum});
+
+    var qavg = client.user.Query();
+    defer qavg.deinit();
+    const age_avg = try qavg.Avg("age");
+    std.debug.print("Avg of ages: {d}\n", .{@as(i64, @intFromFloat(age_avg))});
+
+    var qmax = client.user.Query();
+    defer qmax.deinit();
+    const age_max = try qmax.Max("age");
+    std.debug.print("Max age: {d}\n", .{age_max.int});
+
+    var qmin = client.user.Query();
+    defer qmin.deinit();
+    const age_min = try qmin.Min("age");
+    std.debug.print("Min age: {d}\n", .{age_min.int});
+
     // UPDATE
     std.debug.print("\n-- UPDATE --\n", .{});
     var upd = client.user.Update();
