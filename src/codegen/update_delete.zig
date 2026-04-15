@@ -9,6 +9,7 @@ const Op = @import("../runtime/hook.zig").Op;
 const privacy = @import("../privacy/policy.zig");
 
 const FieldValue = @import("create.zig").FieldValue;
+const validateSqlValue = @import("create.zig").validateSqlValue;
 
 /// Generate an Update builder for an entity.
 pub fn UpdateBuilder(comptime info: TypeInfo) type {
@@ -125,6 +126,14 @@ pub fn UpdateBuilder(comptime info: TypeInfo) type {
                 for (self.hooks) |h| {
                     if (h.op == .update) {
                         if (h.after) |f| f(.update, info.table_name);
+                    }
+                }
+            }
+
+            for (self.values.items) |fv| {
+                inline for (info.fields) |f| {
+                    if (std.mem.eql(u8, f.name, fv.name)) {
+                        try validateSqlValue(f, fv.value);
                     }
                 }
             }

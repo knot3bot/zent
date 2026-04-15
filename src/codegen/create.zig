@@ -149,6 +149,11 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
             defer args.deinit();
 
             for (self.values.items) |fv| {
+                inline for (info.fields) |f| {
+                    if (std.mem.eql(u8, f.name, fv.name)) {
+                        try validateSqlValue(f, fv.value);
+                    }
+                }
                 columns.append(fv.name) catch unreachable;
                 args.append(fv.value) catch unreachable;
             }
@@ -225,6 +230,35 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
             };
         }
     };
+}
+
+pub fn validateSqlValue(comptime field: FieldInfo, value: sql.Value) !void {
+    for (field.validators) |v| {
+        switch (v) {
+            .positive => {
+                const int_val = switch (value) {
+                    .int => |i| i,
+                    else => return error.ValidationFailed,
+                };
+                if (int_val <= 0) return error.ValidationFailed;
+            },
+            .range => |r| {
+                const int_val = switch (value) {
+                    .int => |i| i,
+                    else => return error.ValidationFailed,
+                };
+                if (int_val < r.min or int_val > r.max) return error.ValidationFailed;
+            },
+            .match => |pattern| {
+                const str_val = switch (value) {
+                    .string => |s| s,
+                    else => return error.ValidationFailed,
+                };
+                if (std.mem.indexOf(u8, str_val, pattern) == null) return error.ValidationFailed;
+            },
+            .custom => return error.ValidationFailed,
+        }
+    }
 }
 
 fn canSetField(comptime Expected: type, Actual: type) bool {
@@ -393,6 +427,17 @@ pub fn BulkInsertBuilder(comptime infos: []const TypeInfo, comptime info: TypeIn
                 return std.array_list.Managed(i64).init(self.allocator);
             }
 
+            // Validate all rows
+            for (self.rows.items) |row| {
+                for (row.items) |fv| {
+                    inline for (info.fields) |f| {
+                        if (std.mem.eql(u8, f.name, fv.name)) {
+                            try validateSqlValue(f, fv.value);
+                        }
+                    }
+                }
+            }
+
             const first_row = self.rows.items[0];
             var columns = std.array_list.Managed([]const u8).init(self.allocator);
             defer columns.deinit();
@@ -482,4 +527,75 @@ test "BulkInsert builder basic" {
     try std.testing.expectEqual(@as(usize, 2), b.rows.items.len);
     try std.testing.expectEqualStrings("alice", b.rows.items[0].items[0].value.string);
     try std.testing.expectEqual(@as(i64, 25), b.rows.items[1].items[1].value.int);
+}
+
+test "validateSqlValue positive" {
+    const field_mod = @import("../core/field.zig");
+    const f = field_mod.Int("age").Positive();
+    const info = FieldInfo{
+        .name = f.name,
+        .field_type = f.field_type,
+        .zig_type = i64,
+        .sql_type = "INTEGER",
+        .optional = false,
+        .nillable = false,
+        .unique = false,
+        .immutable = false,
+        .default = .none,
+        .validators = f.validators,
+        .enum_values = f.enum_values,
+        .is_id = false,
+    };
+
+    try validateSqlValue(info, .{ .int = 5 });
+    try std.testing.expectError(error.ValidationFailed, validateSqlValue(info, .{ .int = 0 }));
+    try std.testing.expectError(error.ValidationFailed, validateSqlValue(info, .{ .int = -1 }));
+    try std.testing.expectError(error.ValidationFailed, validateSqlValue(info, .{ .string = "x" }));
+}
+
+test "validateSqlValue range" {
+    const field_mod = @import("../core/field.zig");
+    const f = field_mod.Int("age").Range(0, 120);
+    const info = FieldInfo{
+        .name = f.name,
+        .field_type = f.field_type,
+        .zig_type = i64,
+        .sql_type = "INTEGER",
+        .optional = false,
+        .nillable = false,
+        .unique = false,
+        .immutable = false,
+        .default = .none,
+        .validators = f.validators,
+        .enum_values = f.enum_values,
+        .is_id = false,
+    };
+
+    try validateSqlValue(info, .{ .int = 0 });
+    try validateSqlValue(info, .{ .int = 120 });
+    try std.testing.expectError(error.ValidationFailed, validateSqlValue(info, .{ .int = -1 }));
+    try std.testing.expectError(error.ValidationFailed, validateSqlValue(info, .{ .int = 121 }));
+}
+
+test "validateSqlValue match" {
+    const field_mod = @import("../core/field.zig");
+    const f = field_mod.String("email").Match("@");
+    const info = FieldInfo{
+        .name = f.name,
+        .field_type = f.field_type,
+        .zig_type = []const u8,
+        .sql_type = "TEXT",
+        .optional = false,
+        .nillable = false,
+        .unique = false,
+        .immutable = false,
+        .default = .none,
+        .validators = f.validators,
+        .enum_values = f.enum_values,
+        .is_id = false,
+    };
+
+    try validateSqlValue(info, .{ .string = "a@b.com" });
+    try std.testing.expectError(error.ValidationFailed, validateSqlValue(info, .{ .string = "invalid" }));
+    try std.testing.expectError(error.ValidationFailed, validateSqlValue(info, .{ .int = 1 }));
 }

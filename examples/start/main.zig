@@ -128,6 +128,18 @@ pub fn main() !void {
     const group2 = try group2_builder.Save();
     std.debug.print("Created group: id={d}, name={s}\n", .{ group2.id, group2.name });
 
+    // VALIDATION demo
+    std.debug.print("\n-- VALIDATION --\n", .{});
+    var invalid_builder = client.user.Create();
+    defer invalid_builder.deinit();
+    _ = invalid_builder.setFieldValue("name", "Invalid").setFieldValue("age", -1).setFieldValue("status", "active").setFieldValue("settings", UserSettings{ .theme = "red", .notifications = false });
+    if (invalid_builder.Save()) |_| {
+        std.debug.print("Unexpected success for invalid data\n", .{});
+    } else |err| switch (err) {
+        error.ValidationFailed => std.debug.print("Validation failed for negative age (expected)\n", .{}),
+        else => return err,
+    }
+
     // CREATE User with M2M edge adder
     std.debug.print("\n-- CREATE User --\n", .{});
     var create_builder1 = client.user.Create();
