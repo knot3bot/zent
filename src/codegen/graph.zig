@@ -15,6 +15,7 @@ pub const FieldInfo = struct {
     immutable: bool,
     default: field_mod.DefaultValue,
     validators: []const field_mod.Validator,
+    enum_values: []const []const u8,
     is_id: bool,
 };
 
@@ -108,6 +109,7 @@ fn toFieldInfo(comptime f: field_mod.Field) FieldInfo {
             .immutable = f.immutable,
             .default = f.default,
             .validators = f.validators,
+            .enum_values = f.enum_values,
             .is_id = is_id,
         };
     }
@@ -312,6 +314,7 @@ fn addEdgeFields(comptime info: TypeInfo, comptime all_infos: []const TypeInfo) 
                     .immutable = false,
                     .default = .none,
                     .validators = &.{},
+                    .enum_values = &.{},
                     .is_id = false,
                 }};
             }
@@ -357,6 +360,7 @@ fn addEdgeFields(comptime info: TypeInfo, comptime all_infos: []const TypeInfo) 
                                 .immutable = false,
                                 .default = .none,
                                 .validators = &.{},
+                                .enum_values = &.{},
                                 .is_id = false,
                             }};
                         }

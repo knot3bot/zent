@@ -100,6 +100,10 @@ fn scanColumn(comptime T: type, allocator: std.mem.Allocator, row: Row, index: u
             if (row.isNull(index)) return null;
             return try scanColumn(opt.child, allocator, row, index);
         },
+        .@"struct" => {
+            const text = row.getText(index) orelse return error.TypeMismatch;
+            return std.json.parseFromSliceLeaky(T, allocator, text, .{}) catch return error.TypeMismatch;
+        },
         else => @compileError("Unsupported column type for scanning: " ++ @typeName(T)),
     }
 }

@@ -1,7 +1,13 @@
+const std = @import("std");
 const zent = @import("zent");
 const field = zent.core.field;
 const edge = zent.core.edge;
 const Schema = zent.core.schema.Schema;
+
+pub const UserSettings = struct {
+    theme: []const u8,
+    notifications: bool,
+};
 
 fn withEdges(comptime Base: type, comptime es: []const edge.Edge) type {
     return struct {
@@ -29,6 +35,8 @@ const UserBase = Schema("User", .{
     .fields = &.{
         field.Int("age").Positive(),
         field.String("name").Default("unknown"),
+        field.Enum("status", &.{ "active", "inactive" }),
+        field.JSON("settings", UserSettings),
     },
     .mixins = &.{zent.core.mixin.TimeMixin},
 });

@@ -16,6 +16,7 @@ const start_schema = @import("schema.zig");
 const User = start_schema.User;
 const Car = start_schema.Car;
 const Group = start_schema.Group;
+const UserSettings = start_schema.UserSettings;
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -123,17 +124,21 @@ pub fn main() !void {
     defer create_builder1.deinit();
     _ = create_builder1.setFieldValue("name", "Alice");
     _ = create_builder1.setFieldValue("age", 30);
+    _ = create_builder1.setFieldValue("status", "active");
+    _ = create_builder1.setFieldValue("settings", UserSettings{ .theme = "dark", .notifications = true });
     _ = create_builder1.AddEdge("groups", &.{group1.id});
     const alice = try create_builder1.Save();
-    std.debug.print("Created user: id={d}, name={s}, age={d}\n", .{ alice.id, alice.name, alice.age });
+    std.debug.print("Created user: id={d}, name={s}, age={d}, status={s}, theme={s}\n", .{ alice.id, alice.name, alice.age, alice.status, alice.settings.theme });
 
     var create_builder2 = client.user.Create();
     defer create_builder2.deinit();
     _ = create_builder2.setFieldValue("name", "Bob");
     _ = create_builder2.setFieldValue("age", 25);
+    _ = create_builder2.setFieldValue("status", "inactive");
+    _ = create_builder2.setFieldValue("settings", UserSettings{ .theme = "light", .notifications = false });
     _ = create_builder2.AddEdge("groups", &.{group2.id});
     const bob = try create_builder2.Save();
-    std.debug.print("Created user: id={d}, name={s}, age={d}\n", .{ bob.id, bob.name, bob.age });
+    std.debug.print("Created user: id={d}, name={s}, age={d}, status={s}, theme={s}\n", .{ bob.id, bob.name, bob.age, bob.status, bob.settings.theme });
 
     // CREATE Car (with O2M owner edge)
     std.debug.print("\n-- CREATE Car --\n", .{});
@@ -167,7 +172,7 @@ pub fn main() !void {
     defer users.deinit();
     std.debug.print("Users with age=30: {d}\n", .{users.items.len});
     for (users.items) |u| {
-        std.debug.print("  id={d}, name={s}, age={d}\n", .{ u.id, u.name, u.age });
+        std.debug.print("  id={d}, name={s}, age={d}, status={s}, theme={s}\n", .{ u.id, u.name, u.age, u.status, u.settings.theme });
     }
 
     // FIRST / ONLY
@@ -175,7 +180,7 @@ pub fn main() !void {
     defer q2.deinit();
     _ = q2.Where(.{user_preds.nameEQ(.{ .string = "Alice" })});
     const only_alice = try q2.Only();
-    std.debug.print("Only Alice: id={d}, name={s}\n", .{ only_alice.id, only_alice.name });
+    std.debug.print("Only Alice: id={d}, name={s}, status={s}, theme={s}\n", .{ only_alice.id, only_alice.name, only_alice.status, only_alice.settings.theme });
 
     // QUERY Cars by owner (O2M edge traversal)
     std.debug.print("\n-- QUERY Cars (edge traversal) --\n", .{});
@@ -206,6 +211,7 @@ pub fn main() !void {
     var upd = client.user.Update();
     defer upd.deinit();
     _ = upd.setFieldValue("age", 31)
+        .setFieldValue("settings", UserSettings{ .theme = "auto", .notifications = true })
         .Where(.{user_preds.nameEQ(.{ .string = "Alice" })});
     const updated = try upd.Save();
     std.debug.print("Updated {d} row(s)\n", .{updated});

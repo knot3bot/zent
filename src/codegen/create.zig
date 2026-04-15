@@ -37,6 +37,7 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
         driver: sql_driver.Driver,
         values: std.array_list.Managed(FieldValue),
         edge_values: std.array_list.Managed(EdgeValue),
+        json_strings: std.array_list.Managed([]const u8),
         hooks: []const Hook,
 
         const EdgeValue = struct {
@@ -51,10 +52,13 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
                 .hooks = hooks,
                 .values = std.array_list.Managed(FieldValue).init(allocator),
                 .edge_values = std.array_list.Managed(EdgeValue).init(allocator),
+                .json_strings = std.array_list.Managed([]const u8).init(allocator),
             };
         }
 
         pub fn deinit(self: *Self) void {
+            for (self.json_strings.items) |s| self.allocator.free(s);
+            self.json_strings.deinit();
             self.values.deinit();
             self.edge_values.deinit();
         }
@@ -67,6 +71,7 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
 
         /// Set a field value with compile-time name and type checking.
         pub fn setFieldValue(self: *Self, comptime field_name: []const u8, value: anytype) *Self {
+            comptime var needs_json = false;
             comptime {
                 var found = false;
                 for (info.fields) |f| {
@@ -76,12 +81,32 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
                         if (!canSetField(Expected, Actual)) {
                             @compileError("Type mismatch for field '" ++ field_name ++ "': expected " ++ @typeName(Expected) ++ ", got " ++ @typeName(Actual));
                         }
+                        if (f.field_type == .enum_ and f.enum_values.len > 0) {
+                            const actual_info = @typeInfo(Actual);
+                            if (actual_info == .array and actual_info.array.child == u8) {
+                                var valid = false;
+                                for (f.enum_values) |ev| {
+                                    if (std.mem.eql(u8, ev, value)) valid = true;
+                                }
+                                if (!valid) @compileError("Invalid enum value for field '" ++ field_name ++ "': '" ++ value ++ "'");
+                            }
+                        }
+                        if (f.field_type == .json and @typeInfo(Actual) == .@"struct") {
+                            needs_json = true;
+                        }
                         found = true;
                         break;
                     }
                 }
                 if (!found) @compileError("Unknown field: " ++ field_name);
             }
+
+            if (comptime needs_json) {
+                const json_str = std.json.Stringify.valueAlloc(self.allocator, value, .{}) catch unreachable;
+                self.json_strings.append(json_str) catch unreachable;
+                return self.setValue(field_name, .{ .string = json_str });
+            }
+
             return self.setValue(field_name, toSqlValue(value));
         }
 
@@ -184,7 +209,7 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
             // Fill other fields from mutation values
             for (self.values.items) |fv| {
                 if (std.mem.eql(u8, fv.name, "id")) continue;
-                setEntityField(&entity, fv.name, fv.value);
+                setEntityField(&entity, fv.name, fv.value, self.allocator);
             }
 
             // Insert M2M junction table rows
@@ -216,22 +241,26 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
             return entity;
         }
 
-        fn setEntityField(entity: *Entity, name: []const u8, value: sql.Value) void {
+        fn setEntityField(entity: *Entity, name: []const u8, value: sql.Value, allocator: std.mem.Allocator) void {
             inline for (info.fields) |f| {
                 if (std.mem.eql(u8, f.name, name)) {
-                    @field(entity, f.name) = valueToType(f.zig_type, value);
+                    @field(entity, f.name) = valueToType(f.zig_type, f.field_type, value, allocator);
                     return;
                 }
             }
         }
 
-        fn valueToType(comptime T: type, value: sql.Value) T {
+        fn valueToType(comptime T: type, comptime ft: @import("../core/field.zig").FieldType, value: sql.Value, allocator: std.mem.Allocator) T {
             return switch (@typeInfo(T)) {
                 .int => @intCast(value.int),
                 .bool => value.bool,
                 .float => @floatCast(value.float),
                 else => {
                     if (T == []const u8) return value.string;
+                    if (ft == .json) {
+                        const parsed = std.json.parseFromSliceLeaky(T, allocator, value.string, .{}) catch unreachable;
+                        return parsed;
+                    }
                     @compileError("Unsupported type for value conversion: " ++ @typeName(T));
                 },
             };

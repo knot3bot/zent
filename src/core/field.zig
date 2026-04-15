@@ -43,6 +43,8 @@ pub const Field = struct {
     immutable: bool = false,
     default: DefaultValue = .none,
     validators: []const Validator = &.{},
+    enum_values: []const []const u8 = &.{},
+    json_schema: ?type = null,
 
     // Builder methods
     pub fn Optional(self: Field) Field {
@@ -153,10 +155,7 @@ pub fn JSON(name: []const u8, comptime T: type) Field {
 }
 
 pub fn Enum(name: []const u8, comptime values: []const []const u8) Field {
-    // Store values as a comma-separated string for simplicity in comptime.
-    // In a real implementation we might use a more structured approach.
-    _ = values;
-    return .{ .name = name, .field_type = .enum_ };
+    return .{ .name = name, .field_type = .enum_, .enum_values = values };
 }
 
 pub fn UUID(name: []const u8) Field {
