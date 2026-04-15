@@ -333,6 +333,21 @@ pub fn main() !void {
     defer distinct_users.deinit();
     std.debug.print("Distinct users: {d}\n", .{distinct_users.items.len});
 
+    // BULK INSERT
+    std.debug.print("\n-- BULK INSERT --\n", .{});
+    var bulk = client.user.BulkInsert();
+    defer bulk.deinit();
+    _ = bulk.setFieldValue("name", "Bulk1").setFieldValue("age", 10).setFieldValue("status", "active").setFieldValue("settings", UserSettings{ .theme = "red", .notifications = false });
+    _ = bulk.Next();
+    _ = bulk.setFieldValue("name", "Bulk2").setFieldValue("age", 20).setFieldValue("status", "inactive").setFieldValue("settings", UserSettings{ .theme = "blue", .notifications = true });
+    const bulk_ids = try bulk.Save();
+    defer bulk_ids.deinit();
+    std.debug.print("Bulk inserted {d} users, ids: ", .{bulk_ids.items.len});
+    for (bulk_ids.items) |id| {
+        std.debug.print("{d} ", .{id});
+    }
+    std.debug.print("\n", .{});
+
     // UPDATE
     std.debug.print("\n-- UPDATE --\n", .{});
     var upd = client.user.Update();

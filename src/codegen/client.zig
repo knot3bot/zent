@@ -9,6 +9,7 @@ const Hook = @import("../runtime/hook.zig").Hook;
 
 const EntityGen = @import("entity.zig").Entity;
 const CreateGen = @import("create.zig").CreateBuilder;
+const BulkInsertGen = @import("create.zig").BulkInsertBuilder;
 const QueryGen = @import("query.zig").QueryBuilder;
 const UpdateGen = @import("update_delete.zig").UpdateBuilder;
 const DeleteGen = @import("update_delete.zig").DeleteBuilder;
@@ -30,6 +31,7 @@ fn capitalize(comptime s: []const u8) []const u8 {
 pub fn EntityClient(comptime infos: []const TypeInfo, comptime info: TypeInfo) type {
     const Entity = EntityGen(infos, info);
     const CreateBuilder = CreateGen(infos, info, Entity);
+    const BulkInsertBuilder = BulkInsertGen(infos, info, Entity);
     const QueryBuilder = QueryGen(infos, info, Entity);
     const UpdateBuilder = UpdateGen(info);
     const DeleteBuilder = DeleteGen(info);
@@ -66,6 +68,11 @@ pub fn EntityClient(comptime infos: []const TypeInfo, comptime info: TypeInfo) t
         pub fn Create(self: Self) CreateBuilder {
             if (info.is_view) @compileError("Create is not supported for view entities");
             return CreateBuilder.init(self.allocator, self.driver, self.hooks);
+        }
+
+        pub fn BulkInsert(self: Self) BulkInsertBuilder {
+            if (info.is_view) @compileError("BulkInsert is not supported for view entities");
+            return BulkInsertBuilder.init(self.allocator, self.driver, self.hooks);
         }
 
         pub fn Update(self: Self) UpdateBuilder {

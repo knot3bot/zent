@@ -124,55 +124,6 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
             return self;
         }
 
-        fn canSetField(comptime Expected: type, Actual: type) bool {
-            // Unwrap optional type for comparison
-            const Unwrapped = if (@typeInfo(Expected) == .optional)
-                @typeInfo(Expected).optional.child
-            else
-                Expected;
-
-            // Direct match
-            if (Expected == Actual) return true;
-            // int literals
-            if (Unwrapped == i64 and Actual == comptime_int) return true;
-            if (Unwrapped == f64 and Actual == comptime_float) return true;
-            // String types - check various pointer/array forms
-            if (Unwrapped == []const u8) {
-                return switch (@typeInfo(Actual)) {
-                    .pointer => |ptr| {
-                        if (ptr.size == .slice and ptr.child == u8) return true;
-                        // Pointer to u8 array like *const [N:0]u8
-                        if (ptr.size == .one) {
-                            const child_ti = @typeInfo(ptr.child);
-                            if (child_ti == .array) return child_ti.array.child == u8;
-                        }
-                        return false;
-                    },
-                    .array => |arr| arr.child == u8,
-                    else => false,
-                };
-            }
-            return false;
-        }
-
-        fn isStringLike(comptime T: type) bool {
-            const ti = @typeInfo(T);
-            return switch (ti) {
-                .pointer => |ptr| {
-                    // Slice of u8 -> string
-                    if (ptr.size == .slice and ptr.child == u8) return true;
-                    // Pointer to u8 array like *const [N:0]u8
-                    if (ptr.size == .one) {
-                        const child_ti = @typeInfo(ptr.child);
-                        if (child_ti == .array) return child_ti.array.child == u8;
-                    }
-                    return false;
-                },
-                .array => |arr| arr.child == u8,
-                else => false,
-            };
-        }
-
         pub fn Save(self: *Self) !Entity {
             if (info.policy) |p| {
                 if (p.evalMutation(.create, info.table_name) == .deny) {
@@ -273,33 +224,208 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
                 },
             };
         }
+    };
+}
 
-        fn toSqlValue(v: anytype) sql.Value {
-            const T = @TypeOf(v);
-            if (T == comptime_int) return .{ .int = v };
-            if (T == comptime_float) return .{ .float = v };
+fn canSetField(comptime Expected: type, Actual: type) bool {
+    const Unwrapped = if (@typeInfo(Expected) == .optional)
+        @typeInfo(Expected).optional.child
+    else
+        Expected;
 
-            // Handle string types more comprehensively
-            const ti = @typeInfo(T);
-            switch (ti) {
-                .bool => return .{ .bool = v },
-                .int => return .{ .int = v },
-                .float => return .{ .float = v },
-                .pointer => |ptr| {
-                    // Slice of u8
-                    if (ptr.size == .slice and ptr.child == u8) return .{ .string = v };
-                    // Pointer to u8 array (e.g., *const [5:0]u8)
-                    if (ptr.size == .one) {
-                        const child_ti = @typeInfo(ptr.child);
-                        if (child_ti == .array and child_ti.array.child == u8) return .{ .string = v };
-                    }
-                },
-                .array => |arr| {
-                    if (arr.child == u8) return .{ .string = v };
-                },
-                else => {},
+    if (Expected == Actual) return true;
+    if (Unwrapped == i64 and Actual == comptime_int) return true;
+    if (Unwrapped == f64 and Actual == comptime_float) return true;
+    if (Unwrapped == []const u8) {
+        return switch (@typeInfo(Actual)) {
+            .pointer => |ptr| {
+                if (ptr.size == .slice and ptr.child == u8) return true;
+                if (ptr.size == .one) {
+                    const child_ti = @typeInfo(ptr.child);
+                    if (child_ti == .array) return child_ti.array.child == u8;
+                }
+                return false;
+            },
+            .array => |arr| arr.child == u8,
+            else => false,
+        };
+    }
+    return false;
+}
+
+fn toSqlValue(v: anytype) sql.Value {
+    const T = @TypeOf(v);
+    if (T == comptime_int) return .{ .int = v };
+    if (T == comptime_float) return .{ .float = v };
+
+    const ti = @typeInfo(T);
+    switch (ti) {
+        .bool => return .{ .bool = v },
+        .int => return .{ .int = v },
+        .float => return .{ .float = v },
+        .pointer => |ptr| {
+            if (ptr.size == .slice and ptr.child == u8) return .{ .string = v };
+            if (ptr.size == .one) {
+                const child_ti = @typeInfo(ptr.child);
+                if (child_ti == .array and child_ti.array.child == u8) return .{ .string = v };
             }
-            @compileError("Unsupported value type: " ++ @typeName(T));
+        },
+        .array => |arr| {
+            if (arr.child == u8) return .{ .string = v };
+        },
+        else => {},
+    }
+    @compileError("Unsupported value type: " ++ @typeName(T));
+}
+
+/// Generate a Bulk Insert builder for an entity.
+/// Supports INSERT ... VALUES (...), (...) RETURNING "id" for backends
+/// that support RETURNING (SQLite 3.35+, PostgreSQL, MySQL 8.0.19+).
+pub fn BulkInsertBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, comptime Entity: type) type {
+    _ = infos;
+    _ = Entity;
+    return struct {
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        driver: sql_driver.Driver,
+        rows: std.array_list.Managed(std.array_list.Managed(FieldValue)),
+        json_strings: std.array_list.Managed([]const u8),
+        hooks: []const Hook,
+
+        pub fn init(allocator: std.mem.Allocator, driver: sql_driver.Driver, hooks: []const Hook) Self {
+            var self = Self{
+                .allocator = allocator,
+                .driver = driver,
+                .hooks = hooks,
+                .rows = std.array_list.Managed(std.array_list.Managed(FieldValue)).init(allocator),
+                .json_strings = std.array_list.Managed([]const u8).init(allocator),
+            };
+            self.rows.append(std.array_list.Managed(FieldValue).init(allocator)) catch unreachable;
+            return self;
+        }
+
+        pub fn deinit(self: *Self) void {
+            for (self.json_strings.items) |s| self.allocator.free(s);
+            self.json_strings.deinit();
+            for (self.rows.items) |*row| row.deinit();
+            self.rows.deinit();
+        }
+
+        /// Start a new row in the bulk insert batch.
+        pub fn Next(self: *Self) *Self {
+            self.rows.append(std.array_list.Managed(FieldValue).init(self.allocator)) catch unreachable;
+            return self;
+        }
+
+        pub fn setValue(self: *Self, name: []const u8, value: sql.Value) *Self {
+            var row = &self.rows.items[self.rows.items.len - 1];
+            row.append(.{ .name = name, .value = value }) catch unreachable;
+            return self;
+        }
+
+        pub fn setFieldValue(self: *Self, comptime field_name: []const u8, value: anytype) *Self {
+            comptime var needs_json = false;
+            comptime {
+                var found = false;
+                for (info.fields) |f| {
+                    if (std.mem.eql(u8, f.name, field_name)) {
+                        const Expected = f.zig_type;
+                        const Actual = @TypeOf(value);
+                        if (!canSetField(Expected, Actual)) {
+                            @compileError("Type mismatch for field '" ++ field_name ++ "': expected " ++ @typeName(Expected) ++ ", got " ++ @typeName(Actual));
+                        }
+                        if (f.field_type == .enum_ and f.enum_values.len > 0) {
+                            const actual_info = @typeInfo(Actual);
+                            if (actual_info == .array and actual_info.array.child == u8) {
+                                var valid = false;
+                                for (f.enum_values) |ev| {
+                                    if (std.mem.eql(u8, ev, value)) valid = true;
+                                }
+                                if (!valid) @compileError("Invalid enum value for field '" ++ field_name ++ "': '" ++ value ++ "'");
+                            }
+                        }
+                        if (f.field_type == .json and @typeInfo(Actual) == .@"struct") {
+                            needs_json = true;
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) @compileError("Unknown field: " ++ field_name);
+            }
+
+            if (comptime needs_json) {
+                const json_str = std.json.Stringify.valueAlloc(self.allocator, value, .{}) catch unreachable;
+                self.json_strings.append(json_str) catch unreachable;
+                return self.setValue(field_name, .{ .string = json_str });
+            }
+
+            return self.setValue(field_name, toSqlValue(value));
+        }
+
+        pub fn Save(self: *Self) !std.array_list.Managed(i64) {
+            if (info.policy) |p| {
+                if (p.evalMutation(.create, info.table_name) == .deny) {
+                    return error.PrivacyDenied;
+                }
+            }
+            for (self.hooks) |h| {
+                if (h.op == .create) {
+                    if (h.before) |f| f(.create, info.table_name);
+                }
+            }
+            defer {
+                for (self.hooks) |h| {
+                    if (h.op == .create) {
+                        if (h.after) |f| f(.create, info.table_name);
+                    }
+                }
+            }
+
+            // Remove trailing empty row if user called Next() at the end
+            while (self.rows.items.len > 0 and self.rows.items[self.rows.items.len - 1].items.len == 0) {
+                var last = self.rows.pop().?;
+                last.deinit();
+            }
+
+            if (self.rows.items.len == 0) {
+                return std.array_list.Managed(i64).init(self.allocator);
+            }
+
+            const first_row = self.rows.items[0];
+            var columns = std.array_list.Managed([]const u8).init(self.allocator);
+            defer columns.deinit();
+            for (first_row.items) |fv| {
+                columns.append(fv.name) catch unreachable;
+            }
+
+            var builder = sql.Insert(self.allocator, self.driver.dialect(), info.table_name);
+            defer builder.deinit();
+            _ = builder.columns(columns.items);
+            for (self.rows.items) |row| {
+                var sql_values = std.array_list.Managed(sql.Value).init(self.allocator);
+                defer sql_values.deinit();
+                for (row.items) |fv| sql_values.append(fv.value) catch unreachable;
+                _ = builder.values(sql_values.items);
+            }
+            const base = try builder.query();
+
+            var sql_buf = std.array_list.Managed(u8).init(self.allocator);
+            defer sql_buf.deinit();
+            try sql_buf.appendSlice(base.sql);
+            try sql_buf.appendSlice(" RETURNING \"id\"");
+
+            var rows = try self.driver.query(sql_buf.items, base.args);
+            defer rows.deinit();
+
+            var ids = std.array_list.Managed(i64).init(self.allocator);
+            errdefer ids.deinit();
+            while (rows.next()) |row| {
+                const id = row.getInt(0) orelse return error.TypeMismatch;
+                ids.append(id) catch unreachable;
+            }
+            return ids;
         }
     };
 }
@@ -329,4 +455,31 @@ test "Create builder basic" {
     // Test the internal setValue method
     _ = b.setValue("name", .{ .string = "alice" });
     try std.testing.expectEqual(@as(usize, 1), b.values.items.len);
+}
+
+test "BulkInsert builder basic" {
+    const field = @import("../core/field.zig");
+    const schema = @import("../core/schema.zig").Schema;
+    const fromSchema = @import("graph.zig").fromSchema;
+    const EntityGen = @import("entity.zig").Entity;
+
+    const User = schema("User", .{
+        .fields = &.{ field.String("name"), field.Int("age") },
+    });
+
+    const info = comptime fromSchema(User);
+    const infos = &[_]TypeInfo{info};
+    const UserEntity = comptime EntityGen(infos, info);
+    const BulkBuilder = BulkInsertBuilder(infos, info, UserEntity);
+
+    var b = BulkBuilder.init(std.testing.allocator, undefined, &.{});
+    defer b.deinit();
+
+    _ = b.setFieldValue("name", "alice").setFieldValue("age", 30);
+    b.Next();
+    _ = b.setFieldValue("name", "bob").setFieldValue("age", 25);
+
+    try std.testing.expectEqual(@as(usize, 2), b.rows.items.len);
+    try std.testing.expectEqualStrings("alice", b.rows.items[0].items[0].value.string);
+    try std.testing.expectEqual(@as(i64, 25), b.rows.items[1].items[1].value.int);
 }
