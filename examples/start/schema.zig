@@ -32,9 +32,8 @@ const UserBase = Schema("User", .{
     },
 });
 
-// Note: Car.From references User with .Ref("cars") which points to UserBase's edge name.
-// The edge resolution looks up the "cars" edge on the target type (UserBase).
-// Since UserBase doesn't have edges defined, the relation falls back to defaults.
-pub const Car = withEdges(CarBase, &.{edge.From("owner", UserBase).Ref("cars").Unique()});
+// M2M is declared with To on both sides.
+// O2M is declared with To on the "one" side and From on the "many" side.
+pub const Car = withEdges(CarBase, &.{edge.From("owner", UserBase).Ref("cars")});
 pub const Group = withEdges(GroupBase, &.{edge.To("users", UserBase)});
-pub const User = withEdges(UserBase, &.{ edge.To("cars", Car), edge.From("groups", Group).Ref("users") });
+pub const User = withEdges(UserBase, &.{ edge.To("cars", Car), edge.To("groups", GroupBase) });

@@ -6,6 +6,7 @@ const Dialect = zent.sql_dialect.Dialect;
 const SQLiteDriver = zent.sql_sqlite.SQLiteDriver;
 const scanRow = zent.sql_scan.scanRow;
 const fromSchema = zent.codegen.graph.fromSchema;
+const buildGraph = zent.codegen.graph.buildGraph;
 const Entity = zent.codegen.entity;
 const Client = zent.codegen.client;
 const migrate = zent.sql_schema;
@@ -20,9 +21,10 @@ pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
     // --- Phase 1: Schema definition and comptime introspection ---
-    const user_info = comptime fromSchema(User);
-    const car_info = comptime fromSchema(Car);
-    const group_info = comptime fromSchema(Group);
+    const graph = comptime buildGraph(&.{ User, Car, Group });
+    const user_info = graph.types[0];
+    const car_info = graph.types[1];
+    const group_info = graph.types[2];
 
     std.debug.print("=== Phase 1: Schema Introspection ===\n", .{});
     std.debug.print("Entity: {s}, Table: {s}, Fields: {d}, Edges: {d}\n", .{
@@ -66,7 +68,7 @@ pub fn main() !void {
     var drv = try SQLiteDriver.open(allocator, ":memory:");
     defer drv.close();
 
-    const infos = comptime &[_]zent.codegen.graph.TypeInfo{ user_info, car_info, group_info };
+    const infos = graph.types;
 
     // Use automatic migration instead of manual CREATE TABLE
     std.debug.print("Creating tables via migration...\n", .{});
@@ -117,7 +119,7 @@ pub fn main() !void {
     defer car2_builder.deinit();
     _ = car2_builder.setFieldValue("model", "Toyota Camry");
     _ = car2_builder.setFieldValue("registered_at", 1687269600);
-    _ = car2_builder.setValue("owner_id", .{ .int = bob.id });
+    _ = car2_builder.setValue("owner_id", .{ .int = alice.id });
     const car2 = try car2_builder.Save();
     std.debug.print("Created car: id={d}, model={s}\n", .{ car2.id, car2.model });
 

@@ -211,6 +211,85 @@ fn toSnakeCase(name: []const u8) []const u8 {
     }
 }
 
+/// Helper to create a minimal Edge for resolveRelation calls.
+/// resolveRelation only reads edge.kind and edge.unique.
+fn makeEdgeForResolve(kind: edge_mod.EdgeKind, unique: bool) edge_mod.Edge {
+    const Dummy = struct {};
+    return .{
+        .name = "",
+        .target = Dummy,
+        .kind = kind,
+        .unique = unique,
+        .required = false,
+        .immutable = false,
+        .ref = null,
+        .field_name = null,
+    };
+}
+
+/// Re-resolve edge relations using the full graph of TypeInfos.
+/// This fixes cases where Base types (used to break circular dependencies)
+/// don't have edges defined, causing inverse edge lookup to fail in fromSchema.
+pub fn resolveGraphEdges(comptime infos: []const TypeInfo) []const TypeInfo {
+    comptime {
+        var result: []const TypeInfo = &.{};
+        for (infos) |info| {
+            var resolved_edges: []const EdgeInfo = &.{};
+            for (info.edges) |e| {
+                var re = e;
+                // Find target info by name
+                for (infos) |target_info| {
+                    if (!std.mem.eql(u8, target_info.name, e.target_name)) continue;
+
+                    if (e.kind == .to) {
+                        // Look for inverse From edge in target
+                        for (target_info.edges) |target_edge| {
+                            if (target_edge.kind == .from) {
+                                if (target_edge.ref) |ref| {
+                                    if (std.mem.eql(u8, ref, e.name)) {
+                                        const edge_dummy = makeEdgeForResolve(e.kind, e.unique);
+                                        const inv_dummy = makeEdgeForResolve(target_edge.kind, target_edge.unique);
+                                        re.relation = edge_mod.resolveRelation(edge_dummy, inv_dummy);
+                                        re.inverse_name = target_edge.name;
+                                    }
+                                }
+                            }
+                        }
+                        // Detect M2M: if target also has a To edge pointing back to us
+                        for (target_info.edges) |target_edge| {
+                            if (target_edge.kind == .to and std.mem.eql(u8, target_edge.target_name, info.name)) {
+                                re.relation = .m2m;
+                                re.inverse_name = target_edge.name;
+                            }
+                        }
+                    } else {
+                        // From edge: look for inverse To edge in target matching our ref
+                        if (e.ref) |ref_name| {
+                            for (target_info.edges) |target_edge| {
+                                if (target_edge.kind == .to and std.mem.eql(u8, target_edge.name, ref_name)) {
+                                    const edge_dummy = makeEdgeForResolve(e.kind, e.unique);
+                                    const inv_dummy = makeEdgeForResolve(target_edge.kind, target_edge.unique);
+                                    re.relation = edge_mod.resolveRelation(edge_dummy, inv_dummy);
+                                    re.inverse_name = target_edge.name;
+                                }
+                            }
+                        }
+                    }
+                }
+                resolved_edges = resolved_edges ++ &[_]EdgeInfo{re};
+            }
+            result = result ++ &[_]TypeInfo{TypeInfo{
+                .name = info.name,
+                .table_name = info.table_name,
+                .fields = info.fields,
+                .edges = resolved_edges,
+                .indexes = info.indexes,
+            }};
+        }
+        return result;
+    }
+}
+
 /// A Graph holds multiple TypeInfos.
 pub const Graph = struct {
     types: []const TypeInfo,
@@ -222,7 +301,8 @@ pub fn buildGraph(comptime schemas: []const type) Graph {
         for (schemas) |S| {
             types = types ++ &[_]TypeInfo{fromSchema(S)};
         }
-        return Graph{ .types = types };
+        const resolved = resolveGraphEdges(types);
+        return Graph{ .types = resolved };
     }
 }
 

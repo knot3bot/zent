@@ -77,11 +77,11 @@ pub fn resolveRelation(edge: Edge, comptime inverse: ?Edge) Relation {
 
     if (edge.kind == .from) {
         // From edge: this entity has a FK column pointing to the target.
-        // unique=true → each entity points to at most one target → M2O or O2O
-        // unique=false → would mean M2M, but From edges don't have non-unique semantics
+        // unique=true → O2O or M2O (each entity points to at most one target)
+        // unique=false → M2O (many current entities can point to one target)
         if (is_unique and inverse_unique) return .o2o;
         if (is_unique) return .m2o; // Many cars → one user (Car.owner is unique per car)
-        return .m2m; // Fallback for non-unique From
+        return .m2o; // Non-unique From = M2O (many current entities → one target)
     }
 
     // To edge: target has FK column pointing back to us.
@@ -109,6 +109,14 @@ test "resolveRelation O2M" {
     const Dummy = struct {};
     const to = To("cars", Dummy);
     const from = From("owner", Dummy).Unique().Ref("cars");
+    try std.testing.expectEqual(Relation.o2m, resolveRelation(to, from));
+    try std.testing.expectEqual(Relation.m2o, resolveRelation(from, to));
+}
+
+test "resolveRelation M2O without unique" {
+    const Dummy = struct {};
+    const to = To("cars", Dummy);
+    const from = From("owner", Dummy).Ref("cars");
     try std.testing.expectEqual(Relation.o2m, resolveRelation(to, from));
     try std.testing.expectEqual(Relation.m2o, resolveRelation(from, to));
 }
