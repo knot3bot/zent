@@ -41,10 +41,73 @@ pub fn CreateBuilder(comptime info: TypeInfo, comptime Entity: type) type {
             self.edge_values.deinit();
         }
 
-        // Set field value helper
+        // Set field value helper (dynamic, no compile-time checking).
         pub fn setValue(self: *Self, name: []const u8, value: sql.Value) *Self {
             self.values.append(.{ .name = name, .value = value }) catch unreachable;
             return self;
+        }
+
+        /// Set a field value with compile-time name and type checking.
+        pub fn setFieldValue(self: *Self, comptime field_name: []const u8, value: anytype) *Self {
+            comptime {
+                var found = false;
+                for (info.fields) |f| {
+                    if (std.mem.eql(u8, f.name, field_name)) {
+                        const Expected = f.zig_type;
+                        const Actual = @TypeOf(value);
+                        if (!canSetField(Expected, Actual)) {
+                            @compileError("Type mismatch for field '" ++ field_name ++ "': expected " ++ @typeName(Expected) ++ ", got " ++ @typeName(Actual));
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) @compileError("Unknown field: " ++ field_name);
+            }
+            return self.setValue(field_name, toSqlValue(value));
+        }
+
+        fn canSetField(comptime Expected: type, Actual: type) bool {
+            // Direct match
+            if (Expected == Actual) return true;
+            // int literals
+            if (Expected == i64 and Actual == comptime_int) return true;
+            if (Expected == f64 and Actual == comptime_float) return true;
+            // String types - check various pointer/array forms
+            if (Expected == []const u8) {
+                return switch (@typeInfo(Actual)) {
+                    .pointer => |ptr| {
+                        if (ptr.size == .slice and ptr.child == u8) return true;
+                        // Pointer to u8 array like *const [N:0]u8
+                        if (ptr.size == .one) {
+                            const child_ti = @typeInfo(ptr.child);
+                            if (child_ti == .array) return child_ti.array.child == u8;
+                        }
+                        return false;
+                    },
+                    .array => |arr| arr.child == u8,
+                    else => false,
+                };
+            }
+            return false;
+        }
+
+        fn isStringLike(comptime T: type) bool {
+            const ti = @typeInfo(T);
+            return switch (ti) {
+                .pointer => |ptr| {
+                    // Slice of u8 -> string
+                    if (ptr.size == .slice and ptr.child == u8) return true;
+                    // Pointer to u8 array like *const [N:0]u8
+                    if (ptr.size == .one) {
+                        const child_ti = @typeInfo(ptr.child);
+                        if (child_ti == .array) return child_ti.array.child == u8;
+                    }
+                    return false;
+                },
+                .array => |arr| arr.child == u8,
+                else => false,
+            };
         }
 
         pub fn Save(self: *Self) !Entity {
@@ -97,11 +160,37 @@ pub fn CreateBuilder(comptime info: TypeInfo, comptime Entity: type) type {
                 },
             };
         }
+
+        fn toSqlValue(v: anytype) sql.Value {
+            const T = @TypeOf(v);
+            if (T == comptime_int) return .{ .int = v };
+            if (T == comptime_float) return .{ .float = v };
+
+            // Handle string types more comprehensively
+            const ti = @typeInfo(T);
+            switch (ti) {
+                .bool => return .{ .bool = v },
+                .int => return .{ .int = v },
+                .float => return .{ .float = v },
+                .pointer => |ptr| {
+                    // Slice of u8
+                    if (ptr.size == .slice and ptr.child == u8) return .{ .string = v };
+                    // Pointer to u8 array (e.g., *const [5:0]u8)
+                    if (ptr.size == .one) {
+                        const child_ti = @typeInfo(ptr.child);
+                        if (child_ti == .array and child_ti.array.child == u8) return .{ .string = v };
+                    }
+                },
+                .array => |arr| {
+                    if (arr.child == u8) return .{ .string = v };
+                },
+                else => {},
+            }
+            @compileError("Unsupported value type: " ++ @typeName(T));
+        }
     };
 }
 
-// ------------------------------------------------------------------
-// Tests
 // ------------------------------------------------------------------
 // Tests
 // ------------------------------------------------------------------

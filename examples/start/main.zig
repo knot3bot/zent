@@ -85,15 +85,15 @@ pub fn main() !void {
     std.debug.print("-- CREATE --\n", .{});
     var create_builder1 = client.user.Create();
     defer create_builder1.deinit();
-    _ = create_builder1.setValue("name", .{ .string = "Alice" });
-    _ = create_builder1.setValue("age", .{ .int = 30 });
+    _ = create_builder1.setFieldValue("name", "Alice");
+    _ = create_builder1.setFieldValue("age", 30);
     const alice = try create_builder1.Save();
     std.debug.print("Created user: id={d}, name={s}, age={d}\n", .{ alice.id, alice.name, alice.age });
 
     var create_builder2 = client.user.Create();
     defer create_builder2.deinit();
-    _ = create_builder2.setValue("name", .{ .string = "Bob" });
-    _ = create_builder2.setValue("age", .{ .int = 25 });
+    _ = create_builder2.setFieldValue("name", "Bob");
+    _ = create_builder2.setFieldValue("age", 25);
     const bob = try create_builder2.Save();
     std.debug.print("Created user: id={d}, name={s}, age={d}\n", .{ bob.id, bob.name, bob.age });
 
@@ -103,7 +103,7 @@ pub fn main() !void {
 
     var qbuilder = client.user.Query();
     defer qbuilder.deinit();
-    _ = qbuilder.Where(&.{user_preds.ageEQ(.{ .int = 30 })});
+    _ = qbuilder.Where(.{user_preds.ageEQ(.{ .int = 30 })});
     var users = try qbuilder.All();
     defer users.deinit();
     std.debug.print("Users with age=30: {d}\n", .{users.items.len});
@@ -114,7 +114,7 @@ pub fn main() !void {
     // FIRST / ONLY
     var q2 = client.user.Query();
     defer q2.deinit();
-    _ = q2.Where(&.{user_preds.nameEQ(.{ .string = "Alice" })});
+    _ = q2.Where(.{user_preds.nameEQ(.{ .string = "Alice" })});
     const only_alice = try q2.Only();
     std.debug.print("Only Alice: id={d}, name={s}\n", .{ only_alice.id, only_alice.name });
 
@@ -128,8 +128,8 @@ pub fn main() !void {
     std.debug.print("\n-- UPDATE --\n", .{});
     var upd = client.user.Update();
     defer upd.deinit();
-    _ = upd.set("age", 31)
-        .Where(&.{user_preds.nameEQ(.{ .string = "Alice" })});
+    _ = upd.setFieldValue("age", 31)
+        .Where(.{user_preds.nameEQ(.{ .string = "Alice" })});
     const updated = try upd.Save();
     std.debug.print("Updated {d} row(s)\n", .{updated});
 
@@ -137,7 +137,7 @@ pub fn main() !void {
     std.debug.print("\n-- DELETE --\n", .{});
     var del = client.user.Delete();
     defer del.deinit();
-    _ = del.Where(&.{user_preds.nameEQ(.{ .string = "Bob" })});
+    _ = del.Where(.{user_preds.nameEQ(.{ .string = "Bob" })});
     const deleted = try del.Exec();
     std.debug.print("Deleted {d} row(s)\n", .{deleted});
 

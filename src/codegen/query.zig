@@ -35,9 +35,23 @@ pub fn QueryBuilder(comptime info: TypeInfo, comptime Entity: type) type {
             self.order_terms.deinit();
         }
 
-        pub fn Where(self: *Self, ps: []const sql.Predicate) *Self {
-            for (ps) |p| {
-                self.predicates.append(p) catch unreachable;
+        pub fn Where(self: *Self, predicates: anytype) *Self {
+            switch (@typeInfo(@TypeOf(predicates))) {
+                .pointer, .array => {
+                    for (predicates) |p| {
+                        self.predicates.append(p) catch unreachable;
+                    }
+                },
+                .@"struct" => |s| {
+                    if (s.is_tuple) {
+                        inline for (predicates) |p| {
+                            self.predicates.append(p) catch unreachable;
+                        }
+                    } else {
+                        @compileError("Where expects a tuple or slice of sql.Predicate");
+                    }
+                },
+                else => @compileError("Where expects a tuple or slice of sql.Predicate"),
             }
             return self;
         }
