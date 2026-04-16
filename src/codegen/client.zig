@@ -161,46 +161,30 @@ pub fn TxClient(comptime infos: []const TypeInfo) type {
 /// The Client holds entity sub-clients and per-edge query helpers.
 pub fn Client(comptime infos: []const TypeInfo) type {
     comptime {
-        var fields: []const std.builtin.Type.StructField = &.{};
+        const total_fields = 2 + infos.len; // allocator, driver, + one per entity
+        var field_names: [total_fields][:0]const u8 = undefined;
+        var field_types: [total_fields]type = undefined;
+        var field_attrs: [total_fields]std.builtin.Type.StructField.Attributes = undefined;
 
         // Root fields
-        fields = fields ++ &[_]std.builtin.Type.StructField{.{
-            .name = "allocator",
-            .type = std.mem.Allocator,
-            .default_value_ptr = null,
-            .is_comptime = false,
-            .alignment = @alignOf(std.mem.Allocator),
-        }};
-        fields = fields ++ &[_]std.builtin.Type.StructField{.{
-            .name = "driver",
-            .type = sql_driver.Driver,
-            .default_value_ptr = null,
-            .is_comptime = false,
-            .alignment = @alignOf(sql_driver.Driver),
-        }};
+        field_names[0] = "allocator";
+        field_types[0] = std.mem.Allocator;
+        field_attrs[0] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(std.mem.Allocator) };
+
+        field_names[1] = "driver";
+        field_types[1] = sql_driver.Driver;
+        field_attrs[1] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(sql_driver.Driver) };
 
         // Entity sub-clients (user, car, group, ...)
-        for (infos) |info| {
+        for (infos, 2..) |info, i| {
             const ClientType = EntityClient(infos, info);
-
-            fields = fields ++ &[_]std.builtin.Type.StructField{.{
-                .name = structFieldName(info.name),
-                .type = ClientType,
-                .default_value_ptr = null,
-                .is_comptime = false,
-                .alignment = @alignOf(ClientType),
-            }};
+            const name = structFieldName(info.name);
+            field_names[i] = name;
+            field_types[i] = ClientType;
+            field_attrs[i] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(ClientType) };
         }
 
-        const ClientType = @Type(.{
-            .@"struct" = .{
-                .layout = .auto,
-                .fields = fields,
-                .decls = &.{},
-                .is_tuple = false,
-            },
-        });
-
+        const ClientType = @Struct(.auto, null, &field_names, &field_types, &field_attrs);
         return ClientType;
     }
 }
@@ -300,28 +284,25 @@ pub fn queryTargets(
         // M2M: query via junction table or edge schema (through)
         const source_table = source_info.table_name;
         const target_table = target_info.table_name;
-        const junction_table = if (edge.through_name) |tn|
-            tn
-        else if (std.mem.lessThan(u8, source_table, target_table))
-            source_table ++ "_" ++ target_table
-        else
-            target_table ++ "_" ++ source_table;
-        const source_col = source_table ++ "_id";
-        const target_col = target_table ++ "_id";
 
-        // Build SQL with placeholders
-        var buf: [512]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        const writer = fbs.writer();
-        try writer.print("SELECT * FROM \"{s}\" WHERE \"id\" IN (SELECT \"{s}\" FROM \"{s}\" WHERE \"{s}\" IN (", .{
-            target_table, target_col, junction_table, source_col,
-        });
-        for (parent_ids, 0..) |_, i| {
-            if (i > 0) try writer.writeAll(", ");
-            try writer.writeAll("?");
+        // Build SQL with placeholders using ArrayList
+        var sql_buf = std.array_list.Managed(u8).init(allocator);
+        defer sql_buf.deinit();
+
+        // Determine junction table name
+        if (edge.through_name) |tn| {
+            try sql_buf.print("SELECT * FROM \"{s}\" WHERE \"id\" IN (SELECT \"{s}_id\" FROM \"{s}\" WHERE \"{s}_id\" IN (", .{ target_table, target_table, tn, source_table });
+        } else if (std.mem.lessThan(u8, source_table, target_table)) {
+            try sql_buf.print("SELECT * FROM \"{s}\" WHERE \"id\" IN (SELECT \"{s}_id\" FROM \"{s}_{s}\" WHERE \"{s}_id\" IN (", .{ target_table, target_table, source_table, target_table, source_table });
+        } else {
+            try sql_buf.print("SELECT * FROM \"{s}\" WHERE \"id\" IN (SELECT \"{s}_id\" FROM \"{s}_{s}\" WHERE \"{s}_id\" IN (", .{ target_table, target_table, target_table, source_table, source_table });
         }
-        try writer.writeAll("))");
-        const sql_text = fbs.getWritten();
+        for (parent_ids, 0..) |_, i| {
+            if (i > 0) try sql_buf.appendSlice(", ");
+            try sql_buf.append('?');
+        }
+        try sql_buf.appendSlice("))");
+        const sql_text = sql_buf.items;
 
         var args = try allocator.alloc(sql.Value, parent_ids.len);
         defer allocator.free(args);
@@ -345,30 +326,29 @@ pub fn queryTargets(
         const target_table = target_info.table_name;
         const fk_col = comptime getEdgeFKColumn(edge, source_info, target_info);
 
-        var buf: [512]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        const writer = fbs.writer();
+        var sql_buf = std.array_list.Managed(u8).init(allocator);
+        defer sql_buf.deinit();
 
         if (edge.kind == .to) {
             // To edge: FK is in target table
-            try writer.print("SELECT * FROM \"{s}\" WHERE \"{s}\" IN (", .{ target_table, fk_col });
+            try sql_buf.print("SELECT * FROM \"{s}\" WHERE \"{s}\" IN (", .{ target_table, fk_col });
         } else {
             // From edge: FK is in source table; use subquery
             const source_table = source_info.table_name;
-            try writer.print("SELECT * FROM \"{s}\" WHERE \"id\" IN (SELECT \"{s}\" FROM \"{s}\" WHERE \"id\" IN (", .{
+            try sql_buf.print("SELECT * FROM \"{s}\" WHERE \"id\" IN (SELECT \"{s}\" FROM \"{s}\" WHERE \"id\" IN (", .{
                 target_table, fk_col, source_table,
             });
         }
         for (parent_ids, 0..) |_, i| {
-            if (i > 0) try writer.writeAll(", ");
-            try writer.writeAll("?");
+            if (i > 0) try sql_buf.appendSlice(", ");
+            try sql_buf.append('?');
         }
         if (edge.kind == .from) {
-            try writer.writeAll("))");
+            try sql_buf.appendSlice("))");
         } else {
-            try writer.writeAll(")");
+            try sql_buf.append(')');
         }
-        const sql_text = fbs.getWritten();
+        const sql_text = sql_buf.items;
 
         var args = try allocator.alloc(sql.Value, parent_ids.len);
         defer allocator.free(args);

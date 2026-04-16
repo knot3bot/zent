@@ -14,11 +14,11 @@ pub const Dialect = struct {
         return "?";
     }
 
-    pub fn quoteIdent(d: Dialect, writer: anytype, name: []const u8) !void {
+    pub fn quoteIdent(d: Dialect, buf: []u8, name: []const u8) ![]const u8 {
         if (std.mem.eql(u8, d.name, "mysql")) {
-            try writer.print("`{s}`", .{name});
+            return std.fmt.bufPrint(buf, "`{s}`", .{name});
         } else {
-            try writer.print("\"{s}\"", .{name});
+            return std.fmt.bufPrint(buf, "\"{s}\"", .{name});
         }
     }
 };

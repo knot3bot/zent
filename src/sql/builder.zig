@@ -50,7 +50,9 @@ pub const Builder = struct {
     }
 
     pub fn ident(b: *Builder, name: []const u8) !void {
-        try b.dialect.quoteIdent(b.buffer.writer(), name);
+        var buf: [256]u8 = undefined;
+        const quoted = try b.dialect.quoteIdent(&buf, name);
+        try b.buffer.appendSlice(quoted);
     }
 
     pub fn arg(b: *Builder, value: Value) !void {

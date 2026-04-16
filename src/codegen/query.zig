@@ -370,16 +370,15 @@ pub fn QueryBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, c
                         parent_ids[i] = e.id;
                     }
 
-                    var buf: [4096]u8 = undefined;
-                    var fbs = std.io.fixedBufferStream(&buf);
-                    const writer = fbs.writer();
-                    try writer.writeAll(sql_prefix);
+                    var sql_buf = std.array_list.Managed(u8).init(self.allocator);
+                    defer sql_buf.deinit();
+                    try sql_buf.appendSlice(sql_prefix);
                     for (parent_ids, 0..) |_, i| {
-                        if (i > 0) try writer.writeAll(", ");
-                        try writer.writeAll("?");
+                        if (i > 0) try sql_buf.appendSlice(", ");
+                        try sql_buf.append('?');
                     }
-                    try writer.writeAll(")");
-                    const sql_text = fbs.getWritten();
+                    try sql_buf.append(')');
+                    const sql_text = sql_buf.items;
 
                     var args = try self.allocator.alloc(sql.Value, parent_ids.len);
                     defer self.allocator.free(args);

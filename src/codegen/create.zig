@@ -186,33 +186,54 @@ pub fn CreateBuilder(comptime infos: []const TypeInfo, comptime info: TypeInfo, 
             }
 
             // Insert M2M junction table rows (or edge schema rows)
-            inline for (info.edges) |edge| {
-                if (edge.relation == .m2m) {
-                    for (self.edge_values.items) |ev| {
-                        if (std.mem.eql(u8, ev.edge, edge.name)) {
-                            const target_info = findTypeInfo(infos, edge.target_name);
-                            const source_table = info.table_name;
-                            const target_table = target_info.table_name;
-                            const junction_table = if (edge.through_name) |tn|
-                                tn
-                            else if (std.mem.lessThan(u8, source_table, target_table))
-                                source_table ++ "_" ++ target_table
-                            else
-                                target_table ++ "_" ++ source_table;
-                            const source_col = source_table ++ "_id";
-                            const target_col = target_table ++ "_id";
+            // Pre-compute junction table info at comptime
+            const JunctionInfo = struct {
+                edge_name: []const u8,
+                junction_table: []const u8,
+                source_col: []const u8,
+                target_col: []const u8,
+            };
 
-                            const insert_sql = if (or_replace)
-                                "INSERT OR REPLACE INTO \"" ++ junction_table ++ "\" (\"" ++ source_col ++ "\", \"" ++ target_col ++ "\") VALUES (?, ?)"
-                            else
-                                "INSERT INTO \"" ++ junction_table ++ "\" (\"" ++ source_col ++ "\", \"" ++ target_col ++ "\") VALUES (?, ?)";
+            comptime var junction_infos: []const JunctionInfo = &.{};
+            comptime {
+                for (info.edges) |edge| {
+                    if (edge.relation == .m2m) {
+                        const target_info = findTypeInfo(infos, edge.target_name);
+                        const source_table = info.table_name;
+                        const target_table = target_info.table_name;
 
-                            for (ev.ids) |target_id| {
-                                _ = try self.driver.exec(
-                                    insert_sql,
-                                    &.{ .{ .int = entity.id }, .{ .int = target_id } },
-                                );
-                            }
+                        const junction_table = if (edge.through_name) |tn|
+                            tn
+                        else if (std.mem.lessThan(u8, source_table, target_table))
+                            source_table ++ "_" ++ target_table
+                        else
+                            target_table ++ "_" ++ source_table;
+
+                        junction_infos = junction_infos ++ &[_]JunctionInfo{.{
+                            .edge_name = edge.name,
+                            .junction_table = junction_table,
+                            .source_col = source_table ++ "_id",
+                            .target_col = target_table ++ "_id",
+                        }};
+                    }
+                }
+            }
+
+            // Now use the pre-computed info at runtime
+            for (self.edge_values.items) |ev| {
+                inline for (junction_infos) |ji| {
+                    if (std.mem.eql(u8, ev.edge, ji.edge_name)) {
+                        const insert_sql = if (or_replace)
+                            try std.fmt.allocPrint(self.allocator, "INSERT OR REPLACE INTO \"{s}\" (\"{s}\", \"{s}\") VALUES (?, ?)", .{ ji.junction_table, ji.source_col, ji.target_col })
+                        else
+                            try std.fmt.allocPrint(self.allocator, "INSERT INTO \"{s}\" (\"{s}\", \"{s}\") VALUES (?, ?)", .{ ji.junction_table, ji.source_col, ji.target_col });
+                        defer self.allocator.free(insert_sql);
+
+                        for (ev.ids) |target_id| {
+                            _ = try self.driver.exec(
+                                insert_sql,
+                                &.{ .{ .int = entity.id }, .{ .int = target_id } },
+                            );
                         }
                     }
                 }

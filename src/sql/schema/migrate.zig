@@ -176,70 +176,68 @@ pub fn createTableSQL(table: TableDef, dialect: Dialect) ![]const u8 {
     var buf = std.array_list.Managed(u8).initCapacity(std.heap.page_allocator, 256) catch unreachable;
     defer buf.deinit();
 
-    const writer = buf.writer();
-
-    try writer.writeAll("CREATE TABLE IF NOT EXISTS ");
-    try quoteIdent(dialect, writer, table.name);
-    try writer.writeAll(" (\n");
+    try buf.appendSlice("CREATE TABLE IF NOT EXISTS ");
+    try quoteIdentToBuffer(dialect, &buf, table.name);
+    try buf.appendSlice(" (\n");
 
     for (table.columns, 0..) |col, i| {
-        if (i > 0) try writer.writeAll(",\n");
-        try writer.writeAll("  ");
-        try quoteIdent(dialect, writer, col.name);
-        try writer.writeAll(" ");
-        try writer.writeAll(col.sql_type);
+        if (i > 0) try buf.appendSlice(",\n");
+        try buf.appendSlice("  ");
+        try quoteIdentToBuffer(dialect, &buf, col.name);
+        try buf.appendSlice(" ");
+        try buf.appendSlice(col.sql_type);
 
         if (col.primary_key and isSQLiteDialect(dialect)) {
-            try writer.writeAll(" PRIMARY KEY AUTOINCREMENT");
+            try buf.appendSlice(" PRIMARY KEY AUTOINCREMENT");
         } else if (col.primary_key) {
-            try writer.writeAll(" PRIMARY KEY");
+            try buf.appendSlice(" PRIMARY KEY");
         }
 
         if (col.not_null and !col.primary_key) {
-            try writer.writeAll(" NOT NULL");
+            try buf.appendSlice(" NOT NULL");
         }
 
         if (col.unique and !col.primary_key) {
-            try writer.writeAll(" UNIQUE");
+            try buf.appendSlice(" UNIQUE");
         }
 
         if (col.default_value) |dv| {
-            try writer.writeAll(" DEFAULT ");
-            try writer.writeAll(dv);
+            try buf.appendSlice(" DEFAULT ");
+            try buf.appendSlice(dv);
         }
     }
 
     // Add composite primary key constraint (for multi-column PKs)
     if (table.primary_keys.len > 1) {
-        try writer.writeAll(",\n  PRIMARY KEY (");
+        try buf.appendSlice(",\n  PRIMARY KEY (");
         for (table.primary_keys, 0..) |pk, i| {
-            if (i > 0) try writer.writeAll(", ");
-            try quoteIdent(dialect, writer, pk);
+            if (i > 0) try buf.appendSlice(", ");
+            try quoteIdentToBuffer(dialect, &buf, pk);
         }
-        try writer.writeAll(")");
+        try buf.appendSlice(")");
     }
 
     // Add foreign key constraints
     for (table.foreign_keys) |fk| {
-        try writer.writeAll(",\n  FOREIGN KEY (");
+        try buf.appendSlice(",\n  FOREIGN KEY (");
         for (fk.columns, 0..) |col, i| {
-            if (i > 0) try writer.writeAll(", ");
-            try quoteIdent(dialect, writer, col);
+            if (i > 0) try buf.appendSlice(", ");
+            try quoteIdentToBuffer(dialect, &buf, col);
         }
-        try writer.writeAll(") REFERENCES ");
-        try quoteIdent(dialect, writer, fk.ref_table);
-        try writer.writeAll(" (");
+        try buf.appendSlice(") REFERENCES ");
+        try quoteIdentToBuffer(dialect, &buf, fk.ref_table);
+        try buf.appendSlice(" (");
         for (fk.ref_columns, 0..) |col, i| {
-            if (i > 0) try writer.writeAll(", ");
-            try quoteIdent(dialect, writer, col);
+            if (i > 0) try buf.appendSlice(", ");
+            try quoteIdentToBuffer(dialect, &buf, col);
         }
-        try writer.writeAll(") ON DELETE ");
-        try writer.writeAll(fk.on_delete);
-        try writer.writeAll(" ON UPDATE ");
-        try writer.writeAll(fk.on_update);
+        try buf.appendSlice(") ON DELETE ");
+        try buf.appendSlice(fk.on_delete);
+        try buf.appendSlice(" ON UPDATE ");
+        try buf.appendSlice(fk.on_update);
     }
 
-    try writer.writeAll("\n)");
+    try buf.appendSlice("\n)");
 
     return std.heap.page_allocator.dupe(u8, buf.items);
 }
@@ -249,21 +247,19 @@ pub fn createIndexSQL(index: IndexDef, table_name: []const u8, dialect: Dialect)
     var buf = std.array_list.Managed(u8).initCapacity(std.heap.page_allocator, 256) catch unreachable;
     defer buf.deinit();
 
-    const writer = buf.writer();
-
-    try writer.writeAll("CREATE ");
-    if (index.unique) try writer.writeAll("UNIQUE ");
-    try writer.writeAll("INDEX ");
-    try quoteIdent(dialect, writer, index.name);
-    try writer.writeAll(" ON ");
-    try quoteIdent(dialect, writer, table_name);
-    try writer.writeAll(" (");
+    try buf.appendSlice("CREATE ");
+    if (index.unique) try buf.appendSlice("UNIQUE ");
+    try buf.appendSlice("INDEX ");
+    try quoteIdentToBuffer(dialect, &buf, index.name);
+    try buf.appendSlice(" ON ");
+    try quoteIdentToBuffer(dialect, &buf, table_name);
+    try buf.appendSlice(" (");
 
     for (index.columns, 0..) |col, i| {
-        if (i > 0) try writer.writeAll(", ");
-        try quoteIdent(dialect, writer, col);
+        if (i > 0) try buf.appendSlice(", ");
+        try quoteIdentToBuffer(dialect, &buf, col);
     }
-    try writer.writeAll(")");
+    try buf.appendSlice(")");
 
     return std.heap.page_allocator.dupe(u8, buf.items);
 }
@@ -273,12 +269,11 @@ pub fn createViewSQL(comptime info: TypeInfo, dialect: Dialect) ![]const u8 {
     const view_sql = info.view_sql orelse return error.MissingViewSQL;
     var buf = std.array_list.Managed(u8).initCapacity(std.heap.page_allocator, 256) catch unreachable;
     defer buf.deinit();
-    const writer = buf.writer();
 
-    try writer.writeAll("CREATE VIEW IF NOT EXISTS ");
-    try quoteIdent(dialect, writer, info.table_name);
-    try writer.writeAll(" AS ");
-    try writer.writeAll(view_sql);
+    try buf.appendSlice("CREATE VIEW IF NOT EXISTS ");
+    try quoteIdentToBuffer(dialect, &buf, info.table_name);
+    try buf.appendSlice(" AS ");
+    try buf.appendSlice(view_sql);
 
     return std.heap.page_allocator.dupe(u8, buf.items);
 }
@@ -471,11 +466,11 @@ fn tableFromTypeInfoCrossRef(comptime info: TypeInfo, comptime all_infos: []cons
     }
 }
 
-fn quoteIdent(dialect: Dialect, writer: anytype, name: []const u8) !void {
+fn quoteIdentToBuffer(dialect: Dialect, buf: *std.array_list.Managed(u8), name: []const u8) !void {
     if (std.mem.eql(u8, dialect.name, "mysql")) {
-        try writer.print("`{s}`", .{name});
+        try buf.print("`{s}`", .{name});
     } else {
-        try writer.print("\"{s}\"", .{name});
+        try buf.print("\"{s}\"", .{name});
     }
 }
 
@@ -599,21 +594,20 @@ fn indexExists(indexes: []const ExistingIndex, name: []const u8) bool {
 fn alterTableAddColumnSQL(allocator: std.mem.Allocator, table_name: []const u8, col: ColumnDef, dialect: Dialect) ![]const u8 {
     var buf = std.array_list.Managed(u8).init(allocator);
     defer buf.deinit();
-    const writer = buf.writer();
 
-    try writer.print("ALTER TABLE ", .{});
-    try quoteIdent(dialect, writer, table_name);
-    try writer.print(" ADD COLUMN ", .{});
-    try quoteIdent(dialect, writer, col.name);
-    try writer.print(" {s}", .{col.sql_type});
+    try buf.appendSlice("ALTER TABLE ");
+    try quoteIdentToBuffer(dialect, &buf, table_name);
+    try buf.appendSlice(" ADD COLUMN ");
+    try quoteIdentToBuffer(dialect, &buf, col.name);
+    try buf.print(" {s}", .{col.sql_type});
 
     // For ALTER ADD COLUMN, avoid NOT NULL without a default to keep SQLite happy.
     if (col.default_value) |dv| {
-        try writer.print(" DEFAULT {s}", .{dv});
+        try buf.print(" DEFAULT {s}", .{dv});
     }
 
     if (col.unique and !col.primary_key) {
-        try writer.print(" UNIQUE", .{});
+        try buf.appendSlice(" UNIQUE");
     }
 
     return buf.toOwnedSlice();

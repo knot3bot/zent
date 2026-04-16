@@ -17,74 +17,69 @@ fn fieldName(comptime base: []const u8, comptime suffix: []const u8) [:0]const u
 pub fn Predicates(comptime info: TypeInfo) type {
     comptime {
         @setEvalBranchQuota(10000);
-        var fields: []const std.builtin.Type.StructField = &.{};
+        // Calculate total field count first
+        var total_fields: usize = 0;
         for (info.fields) |f| {
-            const PredFn = *const fn (sql.Value) sql.Predicate;
-            fields = fields ++ &[_]std.builtin.Type.StructField{
-                .{
-                    .name = fieldName(f.name, "EQ"),
-                    .type = PredFn,
-                    .default_value_ptr = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(PredFn),
-                },
-                .{
-                    .name = fieldName(f.name, "NE"),
-                    .type = PredFn,
-                    .default_value_ptr = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(PredFn),
-                },
-                .{
-                    .name = fieldName(f.name, "GT"),
-                    .type = PredFn,
-                    .default_value_ptr = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(PredFn),
-                },
-                .{
-                    .name = fieldName(f.name, "GTE"),
-                    .type = PredFn,
-                    .default_value_ptr = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(PredFn),
-                },
-                .{
-                    .name = fieldName(f.name, "LT"),
-                    .type = PredFn,
-                    .default_value_ptr = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(PredFn),
-                },
-                .{
-                    .name = fieldName(f.name, "LTE"),
-                    .type = PredFn,
-                    .default_value_ptr = null,
-                    .is_comptime = false,
-                    .alignment = @alignOf(PredFn),
-                },
-            };
+            total_fields += 6; // EQ, NE, GT, GTE, LT, LTE
             if (f.field_type == .string or f.field_type == .text) {
-                const StringPredFn = *const fn ([]const u8) sql.Predicate;
-                fields = fields ++ &[_]std.builtin.Type.StructField{
-                    .{
-                        .name = fieldName(f.name, "Contains"),
-                        .type = StringPredFn,
-                        .default_value_ptr = null,
-                        .is_comptime = false,
-                        .alignment = @alignOf(StringPredFn),
-                    },
-                };
+                total_fields += 1; // Contains
             }
         }
-        return @Type(.{
-            .@"struct" = .{
-                .layout = .auto,
-                .fields = fields,
-                .decls = &.{},
-                .is_tuple = false,
-            },
-        });
+
+        var field_names: [total_fields][:0]const u8 = undefined;
+        var field_types: [total_fields]type = undefined;
+        var field_attrs: [total_fields]std.builtin.Type.StructField.Attributes = undefined;
+        var idx: usize = 0;
+
+        for (info.fields) |f| {
+            const PredFn = *const fn (sql.Value) sql.Predicate;
+            const eq_name = fieldName(f.name, "EQ");
+            const ne_name = fieldName(f.name, "NE");
+            const gt_name = fieldName(f.name, "GT");
+            const gte_name = fieldName(f.name, "GTE");
+            const lt_name = fieldName(f.name, "LT");
+            const lte_name = fieldName(f.name, "LTE");
+
+            field_names[idx] = eq_name;
+            field_types[idx] = PredFn;
+            field_attrs[idx] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(PredFn) };
+            idx += 1;
+
+            field_names[idx] = ne_name;
+            field_types[idx] = PredFn;
+            field_attrs[idx] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(PredFn) };
+            idx += 1;
+
+            field_names[idx] = gt_name;
+            field_types[idx] = PredFn;
+            field_attrs[idx] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(PredFn) };
+            idx += 1;
+
+            field_names[idx] = gte_name;
+            field_types[idx] = PredFn;
+            field_attrs[idx] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(PredFn) };
+            idx += 1;
+
+            field_names[idx] = lt_name;
+            field_types[idx] = PredFn;
+            field_attrs[idx] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(PredFn) };
+            idx += 1;
+
+            field_names[idx] = lte_name;
+            field_types[idx] = PredFn;
+            field_attrs[idx] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(PredFn) };
+            idx += 1;
+
+            if (f.field_type == .string or f.field_type == .text) {
+                const StringPredFn = *const fn ([]const u8) sql.Predicate;
+                const contains_name = fieldName(f.name, "Contains");
+                field_names[idx] = contains_name;
+                field_types[idx] = StringPredFn;
+                field_attrs[idx] = .{ .default_value_ptr = null, .@"comptime" = false, .@"align" = @alignOf(StringPredFn) };
+                idx += 1;
+            }
+        }
+        return @Struct(.auto, null, &field_names, &field_types, &field_attrs);
     }
 }
 

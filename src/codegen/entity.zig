@@ -27,25 +27,20 @@ fn toSnakeCase(name: []const u8) []const u8 {
 pub fn LightEntity(comptime infos: []const TypeInfo, comptime info: TypeInfo) type {
     _ = infos;
     comptime {
-        var fields: [info.fields.len]std.builtin.Type.StructField = undefined;
+        var field_names: [info.fields.len][:0]const u8 = undefined;
+        var field_types: [info.fields.len]type = undefined;
+        var field_attrs: [info.fields.len]std.builtin.Type.StructField.Attributes = undefined;
         for (info.fields, 0..) |f, i| {
             const FieldType = if (f.optional) ?f.zig_type else f.zig_type;
-            fields[i] = .{
-                .name = (f.name)[0..f.name.len :0],
-                .type = FieldType,
+            field_names[i] = (f.name)[0..f.name.len :0];
+            field_types[i] = FieldType;
+            field_attrs[i] = .{
                 .default_value_ptr = null,
-                .is_comptime = false,
-                .alignment = @alignOf(FieldType),
+                .@"comptime" = false,
+                .@"align" = @alignOf(FieldType),
             };
         }
-        return @Type(.{
-            .@"struct" = .{
-                .layout = .auto,
-                .fields = &fields,
-                .decls = &.{},
-                .is_tuple = false,
-            },
-        });
+        return @Struct(.auto, null, &field_names, &field_types, &field_attrs);
     }
 }
 
@@ -58,28 +53,23 @@ fn EdgesType(comptime infos: []const TypeInfo, comptime info: TypeInfo) type {
                 pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
             };
         }
-        var fields: [info.edges.len]std.builtin.Type.StructField = undefined;
+        var field_names: [info.edges.len][:0]const u8 = undefined;
+        var field_types: [info.edges.len]type = undefined;
+        var field_attrs: [info.edges.len]std.builtin.Type.StructField.Attributes = undefined;
         for (info.edges, 0..) |e, i| {
             const target_info = findTypeInfo(infos, e.target_name);
             const TargetEntity = LightEntity(infos, target_info);
             const FieldType = ?[]TargetEntity;
             const default_val: FieldType = null;
-            fields[i] = .{
-                .name = (e.name)[0..e.name.len :0],
-                .type = FieldType,
+            field_names[i] = (e.name)[0..e.name.len :0];
+            field_types[i] = FieldType;
+            field_attrs[i] = .{
                 .default_value_ptr = &default_val,
-                .is_comptime = false,
-                .alignment = @alignOf(FieldType),
+                .@"comptime" = false,
+                .@"align" = @alignOf(FieldType),
             };
         }
-        return @Type(.{
-            .@"struct" = .{
-                .layout = .auto,
-                .fields = &fields,
-                .decls = &.{},
-                .is_tuple = false,
-            },
-        });
+        return @Struct(.auto, null, &field_names, &field_types, &field_attrs);
     }
 }
 
@@ -88,32 +78,27 @@ pub fn Entity(comptime infos: []const TypeInfo, comptime info: TypeInfo) type {
     comptime {
         const ET = EdgesType(infos, info);
         const edges_default: ET = .{};
-        var fields: [info.fields.len + 1]std.builtin.Type.StructField = undefined;
+        var field_names: [info.fields.len + 1][:0]const u8 = undefined;
+        var field_types: [info.fields.len + 1]type = undefined;
+        var field_attrs: [info.fields.len + 1]std.builtin.Type.StructField.Attributes = undefined;
         for (info.fields, 0..) |f, i| {
             const FieldType = if (f.optional) ?f.zig_type else f.zig_type;
-            fields[i] = .{
-                .name = (f.name)[0..f.name.len :0],
-                .type = FieldType,
+            field_names[i] = (f.name)[0..f.name.len :0];
+            field_types[i] = FieldType;
+            field_attrs[i] = .{
                 .default_value_ptr = null,
-                .is_comptime = false,
-                .alignment = @alignOf(FieldType),
+                .@"comptime" = false,
+                .@"align" = @alignOf(FieldType),
             };
         }
-        fields[info.fields.len] = .{
-            .name = "edges",
-            .type = ET,
+        field_names[info.fields.len] = "edges";
+        field_types[info.fields.len] = ET;
+        field_attrs[info.fields.len] = .{
             .default_value_ptr = &edges_default,
-            .is_comptime = false,
-            .alignment = @alignOf(ET),
+            .@"comptime" = false,
+            .@"align" = @alignOf(ET),
         };
-        return @Type(.{
-            .@"struct" = .{
-                .layout = .auto,
-                .fields = &fields,
-                .decls = &.{},
-                .is_tuple = false,
-            },
-        });
+        return @Struct(.auto, null, &field_names, &field_types, &field_attrs);
     }
 }
 
