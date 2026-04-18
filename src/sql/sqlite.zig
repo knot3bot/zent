@@ -251,10 +251,10 @@ fn bindArgs(stmt: *c.sqlite3_stmt, args: []const Value) !void {
                 _ = c.sqlite3_bind_double(stmt, idx, v);
             },
             .string => |v| {
-                _ = c.sqlite3_bind_text(stmt, idx, v.ptr, @intCast(v.len), c.SQLITE_TRANSIENT);
+                _ = c.sqlite3_bind_text(stmt, idx, v.ptr, @intCast(v.len), null);
             },
             .bytes => |v| {
-                _ = c.sqlite3_bind_blob(stmt, idx, v.ptr, @intCast(v.len), c.SQLITE_TRANSIENT);
+                _ = c.sqlite3_bind_blob(stmt, idx, v.ptr, @intCast(v.len), null);
             },
         }
     }
