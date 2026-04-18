@@ -14,14 +14,14 @@ pub const Decision = enum {
     deny,
 };
 
-/// A privacy rule evaluates an operation against a table and returns a decision.
-pub const Rule = *const fn (op: Op, table: []const u8) Decision;
+/// Backward compatibility: old-style rule function.
+pub const OldRule = *const fn (op: Op, table: []const u8) Decision;
 
 /// Privacy policy that can be attached to a schema.
-/// If no rule is set for a given operation type, it defaults to allow.
+/// Backward compatible format with separate query and mutation rules.
 pub const Policy = struct {
-    query: ?Rule = null,
-    mutation: ?Rule = null,
+    query: ?OldRule = null,
+    mutation: ?OldRule = null,
 
     pub fn evalQuery(self: Policy, op: Op, table: []const u8) Decision {
         if (self.query) |rule| return rule(op, table);
