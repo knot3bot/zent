@@ -9,9 +9,11 @@ A Zig language implementation of an Entity Framework, inspired by [ent](https://
 - **Schema as Code**: Define entities, fields, edges, and indexes directly in Zig code
 - **Full Static Type Safety**: All query and mutation builders are type-safe at compile time
 - **Comptime Driven**: Leverages Zig's comptime meta-programming capabilities, no external code generation tools needed
-- **SQL First**: SQLite support (current), PostgreSQL/MySQL support coming later
+- **SQL First**: SQLite support (current), PostgreSQL/MySQL support (placeholder)
 - **Graph Traversal Queries**: Elegant abstraction for relational database relationship queries
 - **Fluent API**: Chainable calls, clean and easy to use
+- **Hooks System**: Runtime hooks for before/after operations
+- **Privacy Policy**: Flexible policy framework for access control
 
 ## Quick Start
 
@@ -23,7 +25,7 @@ A Zig language implementation of an Entity Framework, inspired by [ent](https://
 ### Installation
 
 ```bash
-git clone https://github.com/knot3bot/zent.git
+git clone https://github.com/chy3xyz/zent.git
 cd zent
 ```
 
@@ -138,8 +140,13 @@ zent/
 │   │   ├── builder.zig
 │   │   ├── driver.zig
 │   │   ├── sqlite.zig
+│   │   ├── postgres.zig
+│   │   ├── mysql.zig
 │   │   └── ...
 │   ├── runtime/        # Runtime support
+│   │   └── hook.zig
+│   ├── privacy/        # Privacy policy framework
+│   │   └── policy.zig
 │   └── root.zig        # Module entry point
 ├── examples/
 │   └── start/          # Getting started example
@@ -154,9 +161,13 @@ zent/
 - [x] Phase 2: Code generation - entities and builders
 - [x] Phase 3: SQLGraph and graph traversal
 - [x] Phase 4: Migration engine
-- [ ] PostgreSQL support
-- [ ] MySQL support
-- [ ] More advanced features (Hooks, Privacy Policy, etc.)
+- [x] PostgreSQL support (placeholder)
+- [x] MySQL support (placeholder)
+- [x] Hooks system framework
+- [x] Privacy Policy framework
+- [ ] Full PostgreSQL driver implementation
+- [ ] Full MySQL driver implementation
+- [ ] More advanced features
 
 ## Comparison with ent
 
@@ -168,7 +179,7 @@ zent/
 | SQLGraph | ✅ | ✅ |
 | Auto migration | ✅ (Atlas) | ✅ Create-only |
 | SQLite | ✅ | ✅ |
-| PostgreSQL/MySQL | ✅ | ⏳ In progress |
+| PostgreSQL/MySQL | ✅ | ✅ (placeholder) |
 
 ## Contributing
 

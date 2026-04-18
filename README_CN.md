@@ -9,9 +9,11 @@ Zig 语言实现的实体框架（Entity Framework），复刻自 [ent](https://
 - **Schema 即代码**：用 Zig 代码直接定义实体、字段、边、索引
 - **完全静态类型安全**：所有查询构造器、变更构造器在编译期即类型安全
 - **Comptime 驱动**：利用 Zig 的 comptime 元编程能力，无需外部代码生成工具
-- **SQL 优先**：支持 SQLite（当前），PostgreSQL/MySQL 后续支持
+- **SQL 优先**：支持 SQLite（当前），PostgreSQL/MySQL 支持（占位符实现）
 - **图遍历查询**：优雅的关系型数据库关联查询抽象
 - **Fluent API**：链式调用，简洁易用
+- **Hooks 系统**：用于操作前后的运行时钩子
+- **隐私策略**：用于访问控制的灵活策略框架
 
 ## 快速开始
 
@@ -23,7 +25,7 @@ Zig 语言实现的实体框架（Entity Framework），复刻自 [ent](https://
 ### 安装
 
 ```bash
-git clone https://github.com/knot3bot/zent.git
+git clone https://github.com/chy3xyz/zent.git
 cd zent
 ```
 
@@ -138,8 +140,13 @@ zent/
 │   │   ├── builder.zig
 │   │   ├── driver.zig
 │   │   ├── sqlite.zig
+│   │   ├── postgres.zig
+│   │   ├── mysql.zig
 │   │   └── ...
 │   ├── runtime/        # 运行时支持
+│   │   └── hook.zig
+│   ├── privacy/        # 隐私策略框架
+│   │   └── policy.zig
 │   └── root.zig        # 模块入口
 ├── examples/
 │   └── start/          # 入门示例
@@ -154,9 +161,13 @@ zent/
 - [x] Phase 2: 代码生成 - 实体与 Builder
 - [x] Phase 3: SQLGraph 与图遍历
 - [x] Phase 4: 迁移引擎
-- [ ] PostgreSQL 支持
-- [ ] MySQL 支持
-- [ ] 更多高级特性（Hooks、Privacy Policy 等）
+- [x] PostgreSQL 支持（占位符）
+- [x] MySQL 支持（占位符）
+- [x] Hooks 系统框架
+- [x] 隐私策略框架
+- [ ] 完整的 PostgreSQL 驱动实现
+- [ ] 完整的 MySQL 驱动实现
+- [ ] 更多高级特性
 
 ## 与 ent 的对比
 
@@ -168,7 +179,7 @@ zent/
 | SQLGraph | ✅ | ✅ |
 | 自动迁移 | ✅ (Atlas) | ✅ Create-only |
 | SQLite | ✅ | ✅ |
-| PostgreSQL/MySQL | ✅ | ⏳ 进行中 |
+| PostgreSQL/MySQL | ✅ | ✅ (占位符) |
 
 ## 贡献
 
